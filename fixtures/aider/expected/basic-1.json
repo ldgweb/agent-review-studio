@@ -1,0 +1,110 @@
+{
+  "sessionHash": "02311624229a7eb998d276058810e160e51fdd4e53159e30b823c45217eac6f8",
+  "session": {
+    "sessionId": "aider-acme-shop-5963150e-1-2026-03-08",
+    "source": "live",
+    "timestamp": "2026-03-08T16:30:00.000Z",
+    "agent": "aider",
+    "agentLabel": "Aider",
+    "model": "gpt-4o",
+    "projectName": "acme-shop",
+    "projectPath": "/fixtures/acme-shop",
+    "branch": "(see git log)",
+    "originalPrompt": "Add a discount field to the order summary",
+    "declaredGoal": "Add a discount field to the order summary",
+    "initialPlan": [],
+    "status": "needs-review",
+    "outcome": "The discount field is now rendered in the order summary with a default of zero.",
+    "stats": {
+      "filesAnalyzed": 0,
+      "filesModified": 1,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "commandsRun": 0,
+      "testsRun": 0,
+      "testsFailed": 0,
+      "durationMinutes": 1
+    },
+    "summary": {
+      "text": "Ingested from a live Aider transcript. The agent changed 1 file (+0 −0) across src, ran 0 commands and 0 test runs.",
+      "impactedAreas": [
+        "src"
+      ],
+      "riskWarnings": []
+    },
+    "systemAreas": [
+      {
+        "id": "area-src",
+        "label": "src",
+        "critical": false,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "src/checkout/summary.py",
+        "changeType": "modified",
+        "language": "py",
+        "linesAdded": 0,
+        "linesRemoved": 0,
+        "areaId": "area-src",
+        "riskFlags": [],
+        "summary": "Modified — +0 −0 lines in this session.",
+        "hunks": []
+      }
+    ],
+    "timeline": [
+      {
+        "timestamp": "2026-03-08T16:30:00.000Z",
+        "kind": "note",
+        "title": "User: Add a discount field to the order summary",
+        "id": "ev-1"
+      },
+      {
+        "timestamp": "2026-03-08T16:30:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited src/checkout/summary.py",
+        "filePath": "src/checkout/summary.py",
+        "id": "ev-2"
+      },
+      {
+        "timestamp": "2026-03-08T16:30:00.000Z",
+        "kind": "command",
+        "title": "Commit def5678: Add discount field to order summary",
+        "id": "ev-3"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 2,
+        "level": "low",
+        "rationale": "1 files changed, +0 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": []
+  }
+}

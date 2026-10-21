@@ -1,0 +1,264 @@
+{
+  "sessionHash": "5e19175a7d58aa9fc5845735eeff568a9006895f0b09555805b2c5011fe22cc4",
+  "session": {
+    "sessionId": "11111111-2222-3333-4444-555555555555",
+    "source": "live",
+    "timestamp": "2026-03-05T10:00:01.000Z",
+    "agent": "claude-code",
+    "agentLabel": "Claude Code",
+    "model": "claude-opus-4-8",
+    "projectName": "acme-shop",
+    "projectPath": "/fixtures/acme-shop",
+    "branch": "feature/signup",
+    "originalPrompt": "Add validation to the signup form and cover it with tests",
+    "declaredGoal": "Add input validation to signup",
+    "initialPlan": [
+      "Read signup handler",
+      "Add validation",
+      "Write tests"
+    ],
+    "status": "needs-review",
+    "outcome": "Done — signup now validates the email format, trims input, and the new test suite passes (5 tests).",
+    "stats": {
+      "filesAnalyzed": 1,
+      "filesModified": 2,
+      "linesAdded": 10,
+      "linesRemoved": 1,
+      "commandsRun": 2,
+      "testsRun": 2,
+      "testsFailed": 1,
+      "durationMinutes": 7
+    },
+    "summary": {
+      "text": "Ingested from a live Claude Code transcript. The agent changed 2 files (+10 −1) across src, tests, ran 2 commands and 2 test runs.",
+      "impactedAreas": [
+        "src",
+        "tests"
+      ],
+      "riskWarnings": [
+        "Security-sensitive files were modified — review auth/credential handling.",
+        "1 tool call failed during the session."
+      ]
+    },
+    "systemAreas": [
+      {
+        "id": "area-src",
+        "label": "src",
+        "critical": true,
+        "dependsOn": []
+      },
+      {
+        "id": "area-tests",
+        "label": "tests",
+        "critical": true,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "src/auth/signup.ts",
+        "changeType": "modified",
+        "language": "ts",
+        "linesAdded": 4,
+        "linesRemoved": 1,
+        "areaId": "area-src",
+        "riskFlags": [
+          "security"
+        ],
+        "summary": "Modified — +4 −1 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ -10,3 +10,6 @@",
+            "lines": [
+              {
+                "kind": "context",
+                "text": "function signup(email) {",
+                "oldLine": 10,
+                "newLine": 10
+              },
+              {
+                "kind": "add",
+                "text": "  if (!email.includes('@')) {",
+                "newLine": 11
+              },
+              {
+                "kind": "add",
+                "text": "    throw new ValidationError('invalid email');",
+                "newLine": 12
+              },
+              {
+                "kind": "add",
+                "text": "  }",
+                "newLine": 13
+              },
+              {
+                "kind": "del",
+                "text": "  return register(email);",
+                "oldLine": 11
+              },
+              {
+                "kind": "add",
+                "text": "  return register(email.trim());",
+                "newLine": 14
+              },
+              {
+                "kind": "context",
+                "text": "}",
+                "oldLine": 12,
+                "newLine": 15
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lf-2",
+        "path": "tests/signup.test.ts",
+        "changeType": "created",
+        "language": "ts",
+        "linesAdded": 6,
+        "linesRemoved": 0,
+        "areaId": "area-tests",
+        "riskFlags": [
+          "security"
+        ],
+        "summary": "Created — +6 −0 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ new file — 6 lines @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import { signup } from '../src/auth/signup';",
+                "newLine": 1
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "newLine": 2
+              },
+              {
+                "kind": "add",
+                "text": "test('rejects invalid email', () => {",
+                "newLine": 3
+              },
+              {
+                "kind": "add",
+                "text": "  expect(() => signup('nope')).toThrow();",
+                "newLine": 4
+              },
+              {
+                "kind": "add",
+                "text": "});",
+                "newLine": 5
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "newLine": 6
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "timestamp": "2026-03-05T10:00:10.000Z",
+        "kind": "plan",
+        "title": "Updated plan (3 steps)",
+        "detail": "1. Read signup handler\n2. Add validation\n3. Write tests",
+        "id": "ev-1"
+      },
+      {
+        "timestamp": "2026-03-05T10:00:20.000Z",
+        "kind": "file-read",
+        "title": "Read src/auth/signup.ts",
+        "filePath": "src/auth/signup.ts",
+        "id": "ev-2"
+      },
+      {
+        "timestamp": "2026-03-05T10:01:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited src/auth/signup.ts",
+        "filePath": "src/auth/signup.ts",
+        "id": "ev-3"
+      },
+      {
+        "timestamp": "2026-03-05T10:02:00.000Z",
+        "kind": "file-edit",
+        "title": "Wrote tests/signup.test.ts",
+        "filePath": "tests/signup.test.ts",
+        "id": "ev-4"
+      },
+      {
+        "timestamp": "2026-03-05T10:03:00.000Z",
+        "kind": "test-run",
+        "title": "Run the test suite",
+        "command": "npm test",
+        "id": "ev-5"
+      },
+      {
+        "timestamp": "2026-03-05T10:03:30.000Z",
+        "kind": "error",
+        "title": "Bash failed",
+        "detail": "1 test failed: rejects invalid email",
+        "id": "ev-6"
+      },
+      {
+        "timestamp": "2026-03-05T10:04:00.000Z",
+        "kind": "analysis",
+        "title": "Searched: ValidationError",
+        "id": "ev-7"
+      },
+      {
+        "timestamp": "2026-03-05T10:05:00.000Z",
+        "kind": "test-run",
+        "title": "npm test",
+        "command": "npm test",
+        "id": "ev-8"
+      },
+      {
+        "timestamp": "2026-03-05T10:06:00.000Z",
+        "kind": "note",
+        "title": "Used tool WebFetch",
+        "id": "ev-9"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 52,
+        "level": "medium",
+        "rationale": "Auth/credential-related files touched: src/auth/signup.ts, tests/signup.test.ts",
+        "contributingFileIds": [
+          "lf-1",
+          "lf-2"
+        ]
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 4,
+        "level": "low",
+        "rationale": "2 files changed, +10 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": []
+  }
+}

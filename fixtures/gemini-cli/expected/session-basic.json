@@ -1,0 +1,112 @@
+{
+  "sessionHash": "d2897754199ee486a9e27cd2b7c2e92858ccd081c2692e5eb79f0f1eac44f31c",
+  "session": {
+    "sessionId": "gem-session-42",
+    "source": "live",
+    "timestamp": "2026-03-07T10:00:00.000Z",
+    "agent": "gemini-cli",
+    "agentLabel": "Gemini CLI",
+    "model": "unknown model",
+    "projectName": "docs",
+    "projectPath": "/fixtures/acme-shop/docs",
+    "branch": "(no git)",
+    "originalPrompt": "Fix the typo in the docs homepage",
+    "declaredGoal": "Fix the typo in the docs homepage",
+    "initialPlan": [],
+    "status": "needs-review",
+    "outcome": "Done — I replaced the misspelled word on the docs homepage and verified the surrounding text reads correctly.",
+    "stats": {
+      "filesAnalyzed": 0,
+      "filesModified": 1,
+      "linesAdded": 1,
+      "linesRemoved": 1,
+      "commandsRun": 0,
+      "testsRun": 0,
+      "testsFailed": 0,
+      "durationMinutes": 11
+    },
+    "summary": {
+      "text": "Ingested from a live Gemini CLI transcript. The agent changed 1 file (+1 −1) across (root), ran 0 commands and 0 test runs.",
+      "impactedAreas": [
+        "(root)"
+      ],
+      "riskWarnings": []
+    },
+    "systemAreas": [
+      {
+        "id": "area--root-",
+        "label": "(root)",
+        "critical": false,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "index.md",
+        "changeType": "modified",
+        "language": "md",
+        "linesAdded": 1,
+        "linesRemoved": 1,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Modified — +1 −1 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ index.md @@",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "teh product"
+              },
+              {
+                "kind": "add",
+                "text": "the product"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "timestamp": "2026-03-07T10:01:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited /fixtures/acme-shop/docs/index.md",
+        "filePath": "/fixtures/acme-shop/docs/index.md",
+        "id": "ev-1"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 2,
+        "level": "low",
+        "rationale": "1 files changed, +1 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": []
+  }
+}

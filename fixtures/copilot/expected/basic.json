@@ -1,0 +1,201 @@
+{
+  "sessionHash": "11f1d13b1f2dcde97120f3b5a2ba3c47fa76f3897954c135fb49cddbd0dedc83",
+  "session": {
+    "sessionId": "copilot-0001",
+    "source": "live",
+    "timestamp": "2026-07-13T11:30:00.000Z",
+    "agent": "copilot",
+    "agentLabel": "GitHub Copilot",
+    "model": "copilot/claude-opus-4-8",
+    "projectName": "emails",
+    "projectPath": "c:/fixtures/acme-shop/templates/emails",
+    "branch": "(no git)",
+    "originalPrompt": "Clean up the order-shipped email template and extract the shared header",
+    "declaredGoal": "Shipping email template cleanup",
+    "initialPlan": [
+      "Extract shared email header",
+      "Slim down order-shipped template"
+    ],
+    "status": "needs-review",
+    "outcome": "The order-confirmed template now reuses the shared header partial as well.",
+    "stats": {
+      "filesAnalyzed": 1,
+      "filesModified": 3,
+      "linesAdded": 5,
+      "linesRemoved": 14,
+      "commandsRun": 1,
+      "testsRun": 0,
+      "testsFailed": 0,
+      "durationMinutes": 15
+    },
+    "summary": {
+      "text": "Ingested from a live GitHub Copilot transcript. The agent changed 3 files (+5 −14) across (root), ran 1 command and 0 test runs.",
+      "impactedAreas": [
+        "(root)"
+      ],
+      "riskWarnings": []
+    },
+    "systemAreas": [
+      {
+        "id": "area--root-",
+        "label": "(root)",
+        "critical": false,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "email-header.php",
+        "changeType": "created",
+        "language": "php",
+        "linesAdded": 3,
+        "linesRemoved": 0,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Created — +3 −0 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ email-header.php:1 @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "<table class=\"email-header\">",
+                "newLine": 1
+              },
+              {
+                "kind": "add",
+                "text": "  <tr><td><img src=\"<?= $logo_url ?>\" alt=\"<?= $site_name ?>\"></td></tr>",
+                "newLine": 2
+              },
+              {
+                "kind": "add",
+                "text": "</table>",
+                "newLine": 3
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lf-2",
+        "path": "order-shipped.php",
+        "changeType": "modified",
+        "language": "php",
+        "linesAdded": 1,
+        "linesRemoved": 9,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Modified — +1 −9 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ order-shipped.php:3 @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "<?php include __DIR__ . '/email-header.php'; ?>",
+                "newLine": 3
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lf-3",
+        "path": "order-confirmed.php",
+        "changeType": "modified",
+        "language": "php",
+        "linesAdded": 1,
+        "linesRemoved": 5,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Modified — +1 −5 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ order-confirmed.php:2 @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "<?php include __DIR__ . '/email-header.php'; ?>",
+                "newLine": 2
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "timestamp": "2026-07-13T11:30:10.000Z",
+        "kind": "file-read",
+        "title": "Read order-shipped.php",
+        "id": "ev-1"
+      },
+      {
+        "timestamp": "2026-07-13T11:30:10.000Z",
+        "kind": "file-edit",
+        "title": "Edited email-header.php",
+        "filePath": "email-header.php",
+        "id": "ev-2"
+      },
+      {
+        "timestamp": "2026-07-13T11:30:10.000Z",
+        "kind": "file-edit",
+        "title": "Edited order-shipped.php",
+        "filePath": "order-shipped.php",
+        "id": "ev-3"
+      },
+      {
+        "timestamp": "2026-07-13T11:30:10.000Z",
+        "kind": "command",
+        "title": "php -l templates/emails/order-shipped.php",
+        "command": "php -l templates/emails/order-shipped.php",
+        "id": "ev-4"
+      },
+      {
+        "timestamp": "2026-07-13T11:43:20.000Z",
+        "kind": "note",
+        "title": "User: Also use the shared header in the order-confirmed email",
+        "id": "ev-5"
+      },
+      {
+        "timestamp": "2026-07-13T11:43:20.000Z",
+        "kind": "file-edit",
+        "title": "Edited order-confirmed.php",
+        "filePath": "order-confirmed.php",
+        "id": "ev-6"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 6,
+        "level": "low",
+        "rationale": "3 files changed, +5 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": []
+  }
+}

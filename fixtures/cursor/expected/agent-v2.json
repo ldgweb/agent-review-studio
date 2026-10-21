@@ -1,0 +1,206 @@
+{
+  "sessionHash": "73bc4c95533d0edeb242cb3545344cf22249ff1af756b87be2fafc4041ce6e31",
+  "session": {
+    "sessionId": "cursor-v2-0001",
+    "source": "live",
+    "timestamp": "2026-07-13T11:10:00.000Z",
+    "agent": "cursor",
+    "agentLabel": "Cursor",
+    "model": "unknown model",
+    "projectName": "shipping",
+    "projectPath": "c:/fixtures/acme-shop/src/shipping",
+    "branch": "(no git)",
+    "originalPrompt": "Shipping costs show 12.209999 in checkout — fix the rounding",
+    "declaredGoal": "Fix shipping cost rounding",
+    "initialPlan": [
+      "Reproduce the rounding bug",
+      "Fix and cover with a test"
+    ],
+    "status": "needs-review",
+    "outcome": "Fixed: totals are now computed in integer cents and rounded once at display time; added a regression test.",
+    "stats": {
+      "filesAnalyzed": 1,
+      "filesModified": 2,
+      "linesAdded": 9,
+      "linesRemoved": 2,
+      "commandsRun": 1,
+      "testsRun": 1,
+      "testsFailed": 0,
+      "durationMinutes": 10
+    },
+    "summary": {
+      "text": "Ingested from a live Cursor transcript. The agent changed 2 files (+9 −2) across (root), ran 1 command and 1 test run.",
+      "impactedAreas": [
+        "(root)"
+      ],
+      "riskWarnings": []
+    },
+    "systemAreas": [
+      {
+        "id": "area--root-",
+        "label": "(root)",
+        "critical": false,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "calc.ts",
+        "changeType": "modified",
+        "language": "ts",
+        "linesAdded": 3,
+        "linesRemoved": 2,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Modified — +3 −2 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ -2,2 +2,3 @@",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "  const raw = weightKg * ratePerKg;",
+                "oldLine": 2
+              },
+              {
+                "kind": "del",
+                "text": "  return raw + raw * TAX_RATE;",
+                "oldLine": 3
+              },
+              {
+                "kind": "add",
+                "text": "  const rawCents = Math.round(weightKg * ratePerKg * 100);",
+                "newLine": 2
+              },
+              {
+                "kind": "add",
+                "text": "  const taxedCents = Math.round(rawCents * (1 + TAX_RATE));",
+                "newLine": 3
+              },
+              {
+                "kind": "add",
+                "text": "  return taxedCents / 100;",
+                "newLine": 4
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lf-2",
+        "path": "calc.test.ts",
+        "changeType": "created",
+        "language": "ts",
+        "linesAdded": 6,
+        "linesRemoved": 0,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Created — +6 −0 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ -1,0 +1,6 @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import { shippingCost } from './calc';",
+                "newLine": 1
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "newLine": 2
+              },
+              {
+                "kind": "add",
+                "text": "test('rounds to cents once', () => {",
+                "newLine": 3
+              },
+              {
+                "kind": "add",
+                "text": "  expect(shippingCost(2.7, 3.73)).toBe(12.19);",
+                "newLine": 4
+              },
+              {
+                "kind": "add",
+                "text": "});",
+                "newLine": 5
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "newLine": 6
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "timestamp": "2026-07-13T11:10:00.000Z",
+        "kind": "file-read",
+        "title": "Read calc.ts",
+        "id": "ev-1"
+      },
+      {
+        "timestamp": "2026-07-13T11:10:00.000Z",
+        "kind": "analysis",
+        "title": "Searched: toFixed|Math.round",
+        "id": "ev-2"
+      },
+      {
+        "timestamp": "2026-07-13T11:10:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited calc.ts",
+        "filePath": "calc.ts",
+        "id": "ev-3"
+      },
+      {
+        "timestamp": "2026-07-13T11:10:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited calc.test.ts",
+        "filePath": "calc.test.ts",
+        "id": "ev-4"
+      },
+      {
+        "timestamp": "2026-07-13T11:10:00.000Z",
+        "kind": "test-run",
+        "title": "npm test -- calc",
+        "command": "npm test -- calc",
+        "id": "ev-5"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 4,
+        "level": "low",
+        "rationale": "2 files changed, +9 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": []
+  }
+}

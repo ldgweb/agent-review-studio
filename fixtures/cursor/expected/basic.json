@@ -1,0 +1,217 @@
+{
+  "sessionHash": "b5a0491572f5f13994c45ed82a1bd3bce97fb4089dc313766b131c85479e5818",
+  "session": {
+    "sessionId": "cursor-1234-5678",
+    "source": "live",
+    "timestamp": "2026-02-26T00:00:00.000Z",
+    "agent": "cursor",
+    "agentLabel": "Cursor",
+    "model": "unknown model",
+    "projectName": "account",
+    "projectPath": "/fixtures/acme-shop/templates/account",
+    "branch": "(no git)",
+    "originalPrompt": "Restyle the account pages with a shared stylesheet",
+    "declaredGoal": "Restyle the account pages",
+    "initialPlan": [
+      "Create shared stylesheet",
+      "Update profile template"
+    ],
+    "status": "needs-review",
+    "outcome": "Done — the profile template now uses the shared stylesheet and grid layout; the legacy table markup is gone.",
+    "stats": {
+      "filesAnalyzed": 1,
+      "filesModified": 2,
+      "linesAdded": 9,
+      "linesRemoved": 1,
+      "commandsRun": 1,
+      "testsRun": 1,
+      "testsFailed": 1,
+      "durationMinutes": 8
+    },
+    "summary": {
+      "text": "Ingested from a live Cursor transcript. The agent changed 2 files (+9 −1) across (root), ran 1 command and 1 test run.",
+      "impactedAreas": [
+        "(root)"
+      ],
+      "riskWarnings": [
+        "1 tool call failed during the session."
+      ]
+    },
+    "systemAreas": [
+      {
+        "id": "area--root-",
+        "label": "(root)",
+        "critical": false,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "shared.css",
+        "changeType": "created",
+        "language": "css",
+        "linesAdded": 5,
+        "linesRemoved": 0,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Created — +5 −0 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ shared.css @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": ".account {"
+              },
+              {
+                "kind": "add",
+                "text": "  display: grid;"
+              },
+              {
+                "kind": "add",
+                "text": "  gap: 12px;"
+              },
+              {
+                "kind": "add",
+                "text": "}"
+              },
+              {
+                "kind": "add",
+                "text": ""
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lf-2",
+        "path": "profile.phtml",
+        "changeType": "modified",
+        "language": "phtml",
+        "linesAdded": 4,
+        "linesRemoved": 1,
+        "areaId": "area--root-",
+        "riskFlags": [],
+        "summary": "Modified — +4 −1 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ profile.phtml @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "<link rel=\"stylesheet\" href=\"shared.css\">"
+              }
+            ]
+          },
+          {
+            "header": "@@ profile.phtml @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "<div class=\"account\">"
+              },
+              {
+                "kind": "add",
+                "text": ""
+              }
+            ]
+          },
+          {
+            "header": "@@ profile.phtml @@",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "<table class=old>"
+              },
+              {
+                "kind": "add",
+                "text": "<section class=account-grid>"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "timestamp": "2026-02-26T00:00:00.000Z",
+        "kind": "file-read",
+        "title": "Read profile.phtml",
+        "id": "ev-1"
+      },
+      {
+        "timestamp": "2026-02-26T00:00:00.000Z",
+        "kind": "file-edit",
+        "title": "Created shared.css",
+        "filePath": "shared.css",
+        "id": "ev-2"
+      },
+      {
+        "timestamp": "2026-02-26T00:00:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited profile.phtml",
+        "filePath": "profile.phtml",
+        "detail": "Use the shared stylesheet",
+        "id": "ev-3"
+      },
+      {
+        "timestamp": "2026-02-26T00:00:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited profile.phtml",
+        "filePath": "profile.phtml",
+        "id": "ev-4"
+      },
+      {
+        "timestamp": "2026-02-26T00:00:00.000Z",
+        "kind": "error",
+        "title": "npm test",
+        "command": "npm test",
+        "id": "ev-5"
+      },
+      {
+        "timestamp": "2026-02-26T00:00:00.000Z",
+        "kind": "analysis",
+        "title": "Searched: account-grid",
+        "id": "ev-6"
+      },
+      {
+        "timestamp": "2026-02-26T00:00:00.000Z",
+        "kind": "note",
+        "title": "User: Also drop the legacy table markup please",
+        "id": "ev-7"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 4,
+        "level": "low",
+        "rationale": "2 files changed, +9 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": []
+  }
+}

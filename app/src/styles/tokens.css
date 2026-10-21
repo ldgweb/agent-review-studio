@@ -1,0 +1,160 @@
+/* Agent Review Studio — design tokens
+   Aesthetic: a calm, content-forward supervisor's console. Graphite neutrals
+   with a faint indigo bias; a single restrained accent
+   reserved for interaction; colour otherwise carries risk and state only.
+   Dark-first (the shipped shell). Token names are stable — components read
+   these, so the whole app re-skins from here. */
+
+:root {
+  /* Surfaces — graphite, slight indigo bias */
+  --bg-0: #0d0e12;         /* page */
+  --bg-1: #15171c;         /* card / surface */
+  --bg-2: #1b1e25;         /* raised / hover */
+  --bg-3: #242833;         /* active / selected */
+  --border-0: #1b1e26;     /* subtle / hairline */
+  --border-1: #262a33;     /* standard */
+  --border-2: #333845;     /* emphasized */
+
+  /* Text */
+  --text-0: #e9eaf0;       /* primary */
+  --text-1: #9ba1b0;       /* secondary */
+  --text-2: #6b7080;       /* faint / labels */
+
+  /* Accent — interaction only, never risk */
+  --accent: #7e86ff;
+  --accent-dim: rgba(126, 134, 255, 0.14);
+  --accent-line: rgba(126, 134, 255, 0.38);
+
+  /* Risk / severity scale */
+  --risk-low: #35c173;
+  --risk-low-dim: rgba(53, 193, 115, 0.13);
+  --risk-medium: #e6ae3e;
+  --risk-medium-dim: rgba(230, 174, 62, 0.13);
+  --risk-high: #ee8a4c;
+  --risk-high-dim: rgba(238, 138, 76, 0.13);
+  --risk-critical: #f1565f;
+  --risk-critical-dim: rgba(241, 86, 95, 0.13);
+
+  /* State */
+  --ok: #35c173;
+  --ok-dim: rgba(53, 193, 115, 0.13);
+  --warn: #e6ae3e;
+  --err: #f1565f;
+  /* Text on solid state fills (WCAG AA): --on-ok on --ok, --on-warn on
+     --risk-medium / --warn, --on-err on --risk-critical / --err */
+  --on-ok: #0d0e12;
+  --on-warn: #0d0e12;
+  --on-err: #0d0e12;
+
+  /* Scrim behind drawers / modals */
+  --overlay: rgba(0, 0, 0, 0.5);
+
+  /* Diff */
+  --diff-add-bg: rgba(53, 193, 115, 0.10);
+  --diff-add-text: #79dca8;
+  --diff-del-bg: rgba(241, 86, 95, 0.10);
+  --diff-del-text: #f0949a;
+  /* Word-level changed segments inside a del/add pair (GitHub-style) */
+  --diff-add-seg: rgba(53, 193, 115, 0.28);
+  --diff-del-seg: rgba(241, 86, 95, 0.28);
+  /* Opaque row tints for sticky gutters (no-wrap horizontal scrolling) */
+  --diff-add-solid: color-mix(in srgb, #35c173 10%, var(--bg-0));
+  --diff-del-solid: color-mix(in srgb, #f1565f 10%, var(--bg-0));
+
+  /* Code tokens — GitHub-dark-inspired for familiarity; backgrounds carry
+     add/del state, token colors stay constant across diff rows */
+  --code-comment: #7d8799;
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-number: #79c0ff;
+  --code-fn: #d2a8ff;
+  --code-tag: #7ee787;
+  --code-attr: #ffa657;
+  --code-punct: #8b95a7;
+
+  /* Typography — readable first: larger base, generous line-height */
+  --font-sans: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+
+  /* Spacing */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 40px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  /* Soft, diffuse shadow — hairline surfaces, not heavy cards */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.36), 0 12px 34px rgba(0, 0, 0, 0.28);
+}
+
+/* Light theme — same token names, re-valued. The shell sets data-theme on
+   <html>; components read tokens, so nothing else changes. Neutrals keep the
+   faint indigo bias; contrast and the accent stay legible on the light ground. */
+:root[data-theme='light'] {
+  --bg-0: #fafafb;
+  --bg-1: #ffffff;
+  --bg-2: #f4f5f8;
+  --bg-3: #ebedf3;
+  --border-0: #eef0f4;
+  --border-1: #e4e6ee;
+  --border-2: #d3d6e0;
+
+  --text-0: #191b22;
+  --text-1: #565c6b;
+  --text-2: #8a8f9e;
+
+  --accent: #5a63ea;
+  --accent-dim: rgba(90, 99, 234, 0.10);
+  --accent-line: rgba(90, 99, 234, 0.32);
+
+  --risk-low: #15883c;
+  --risk-low-dim: rgba(21, 136, 60, 0.10);
+  --risk-medium: #b9790a;
+  --risk-medium-dim: rgba(185, 121, 10, 0.11);
+  --risk-high: #c85a1e;
+  --risk-high-dim: rgba(200, 90, 30, 0.11);
+  --risk-critical: #ce313b;
+  --risk-critical-dim: rgba(206, 49, 59, 0.10);
+
+  --ok: #15883c;
+  --ok-dim: rgba(21, 136, 60, 0.10);
+  --warn: #b9790a;
+  --err: #ce313b;
+  --on-ok: #ffffff;
+  --on-warn: #191b22;
+  --on-err: #ffffff;
+
+  --overlay: rgba(0, 0, 0, 0.5);
+
+  --diff-add-bg: rgba(21, 136, 60, 0.09);
+  --diff-add-text: #137a38;
+  --diff-del-bg: rgba(206, 49, 59, 0.08);
+  --diff-del-text: #b42430;
+  --diff-add-seg: rgba(21, 136, 60, 0.22);
+  --diff-del-seg: rgba(206, 49, 59, 0.22);
+  --diff-add-solid: color-mix(in srgb, #15883c 8%, var(--bg-0));
+  --diff-del-solid: color-mix(in srgb, #ce313b 8%, var(--bg-0));
+
+  /* Code tokens — GitHub-light palette so syntax reads on the light ground */
+  --code-comment: #6e7781;
+  --code-keyword: #cf222e;
+  --code-string: #0a3069;
+  --code-number: #0550ae;
+  --code-fn: #8250df;
+  --code-tag: #116329;
+  --code-attr: #953800;
+  --code-punct: #57606a;
+
+  --shadow-card: 0 1px 2px rgba(16, 18, 26, 0.06), 0 10px 30px rgba(16, 18, 26, 0.07);
+}

@@ -1,0 +1,46 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach real transcripts, databases, backups or unredacted logs: they can contain private code or credentials.
+        Report security issues privately, as described in SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A synthetic transcript or the built-in sample project is the most useful reproduction.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "0.9.0, or commit hash if built from source"
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent / transcript source
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - VS Code Copilot
+        - Aider
+        - Gemini CLI
+        - ars/v1 JSON
+        - Not related to a specific agent
+  - type: input
+    id: os
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
