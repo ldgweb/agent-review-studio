@@ -1,0 +1,10 @@
+node_modules
+dist
+*.local
+
+src-tauri/target
+src-tauri/gen
+src-tauri/icon-source.png
+
+# Staged sidecar binaries (built by scripts/stage-cli.mjs)
+src-tauri/binaries

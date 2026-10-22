@@ -1,0 +1,38 @@
+{
+  "format": "ars/v1",
+  "sessionId": "ars-demo-fix",
+  "agentLabel": "ARS Tour (sample)",
+  "model": "demo-model",
+  "projectName": "demo-shop",
+  "branch": "fix/flaky-retries",
+  "prompt": "Our API client retries flaky requests immediately and hammers the backend. Add exponential backoff with a sensible cap, and document the behavior.\n\n(SAMPLE #2 — this one arrives ALREADY REVIEWED, so you can see what a finished review looks like: per-file verdicts, line comments, a corrections draft ready to copy. Open the decision bar and the rail, then archive both samples when done.)",
+  "outcome": "Added exponential backoff to the API client with a new retry helper. Docs updated. I capped retries at 5 attempts; backoff currently grows unbounded between attempts — flagged by the reviewer.",
+  "plan": [
+    "Extract retry logic into src/api/retry.ts",
+    "Use exponential backoff in the client",
+    "Document the retry behavior"
+  ],
+  "stats": { "filesAnalyzed": 6, "commandsRun": 4, "testsRun": 12, "testsFailed": 0, "durationMinutes": 11 },
+  "timeline": [
+    { "time": "2026-07-19T15:04:00Z", "kind": "plan", "title": "Declared the 3-step plan" },
+    { "time": "2026-07-19T15:05:30Z", "kind": "file-edit", "title": "Created the retry helper", "filePath": "src/api/retry.ts" },
+    { "time": "2026-07-19T15:08:10Z", "kind": "file-edit", "title": "Wired backoff into the client", "filePath": "src/api/client.ts" },
+    { "time": "2026-07-19T15:10:00Z", "kind": "test-run", "title": "npm test — all green", "command": "npm test", "exitCode": 0, "detail": "12 passed." },
+    { "time": "2026-07-19T15:11:20Z", "kind": "file-edit", "title": "Documented the retry behavior", "filePath": "docs/api.md" }
+  ],
+  "files": [
+    {
+      "path": "src/api/client.ts",
+      "diff": "@@ -22,9 +22,10 @@\n export async function request(path: string, init?: RequestInit): Promise<Response> {\n-  for (let attempt = 0; attempt < 3; attempt++) {\n-    const res = await fetch(base + path, init);\n-    if (res.ok) return res;\n-  }\n-  throw new Error('request failed');\n+  return withRetry(() => fetch(base + path, init), {\n+    attempts: 5,\n+    baseDelayMs: 200,\n+  });\n }"
+    },
+    {
+      "path": "src/api/retry.ts",
+      "created": true,
+      "diff": "@@ -0,0 +1,12 @@\n+export interface RetryOptions {\n+  attempts: number;\n+  baseDelayMs: number;\n+}\n+\n+export async function withRetry(run: () => Promise<Response>, opts: RetryOptions): Promise<Response> {\n+  for (let i = 0; i < opts.attempts; i++) {\n+    const res = await run().catch(() => null);\n+    if (res && res.ok) return res;\n+    await sleep(opts.baseDelayMs * 2 ** i);\n+  }\n+  throw new Error('request failed after retries');"
+    },
+    {
+      "path": "docs/api.md",
+      "diff": "@@ -30,4 +30,6 @@\n ## Errors\n \n The client throws after the last attempt.\n-Requests are retried up to 3 times.\n+Requests are retried up to 5 times with exponential backoff.\n+Backoff never exceeds 30 seconds between attempts."
+    }
+  ]
+}

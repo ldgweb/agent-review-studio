@@ -1,0 +1,48 @@
+name: Transcript format changed
+description: An agent's sessions are missing, incomplete or wrong after an agent update
+labels: [adapter]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Agents change how they store sessions. This template helps update the matching adapter.
+        **Never paste a real transcript**: it can contain private code and credentials. Share a minimal, anonymised excerpt with invented content instead.
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+        - VS Code Copilot
+        - Aider
+        - Gemini CLI
+        - ars/v1 JSON
+    validations:
+      required: true
+  - type: input
+    id: agent-version
+    attributes:
+      label: Agent version
+      placeholder: "e.g. Cursor 2.3.1"
+    validations:
+      required: true
+  - type: textarea
+    id: missing
+    attributes:
+      label: What is missing or wrong
+      description: No sessions at all? Missing prompt, commands, test runs or file changes? Wrong files?
+    validations:
+      required: true
+  - type: textarea
+    id: excerpt
+    attributes:
+      label: Anonymised excerpt
+      description: A few records showing the new shape, with invented values.
+      render: json
+  - type: input
+    id: app-version
+    attributes:
+      label: Agent Review Studio version
+      placeholder: "0.9.0, or commit hash if built from source"

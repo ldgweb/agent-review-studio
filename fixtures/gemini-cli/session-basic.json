@@ -1,0 +1,13 @@
+{
+  "sessionId": "gem-session-42",
+  "projectHash": "def456",
+  "startTime": "2026-03-07T10:00:00Z",
+  "lastUpdated": "2026-03-07T10:12:00Z",
+  "messages": [
+    { "id": "m1", "type": "user", "content": "Fix the typo in the docs homepage", "timestamp": "2026-03-07T10:00:00.000Z" },
+    { "id": "m2", "type": "gemini", "content": "Let me fix that typo now.", "timestamp": "2026-03-07T10:01:00.000Z", "toolCalls": [
+      { "name": "replace", "args": { "file_path": "/fixtures/acme-shop/docs/index.md", "old_string": "teh product", "new_string": "the product" }, "result": "ok" }
+    ]},
+    { "id": "m3", "type": "gemini", "content": "Done — I replaced the misspelled word on the docs homepage and verified the surrounding text reads correctly.", "timestamp": "2026-03-07T10:11:00.000Z" }
+  ]
+}

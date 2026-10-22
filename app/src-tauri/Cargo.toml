@@ -1,0 +1,52 @@
+[package]
+name = "agent-review-studio"
+version = "0.9.0"
+description = "Windows workbench for human review of coding-agent sessions"
+authors = ["Lucio (ldgweb)"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ldgweb/agent-review-studio"
+publish = false
+# Two binaries live in this crate (the desktop shell + the ars CLI), so a bare
+# `cargo run` needs to know which one is the default — the desktop app.
+default-run = "agent-review-studio"
+
+# The native core is a library shared by two binaries: the Tauri desktop shell
+# (agent-review-studio) and the headless CLI (ars).
+[lib]
+name = "agent_review_studio"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-review-studio"
+path = "src/main.rs"
+
+[[bin]]
+name = "ars"
+path = "src/bin/ars.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-window-state = "2"
+serde = { version = "1", features = ["derive"] }
+# preserve_order: keeps JSON key order stable, as the fixture contract expects
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"
+once_cell = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sha2 = "0.10"
+percent-encoding = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+dirs = "5"
+notify = "6"
+# Async runtime: the desktop bin gets it from Tauri, the ars CLI needs it directly.
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

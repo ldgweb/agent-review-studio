@@ -1,0 +1,135 @@
+{
+  "sessionHash": "d17c5568a6a3588ae15d8801ae9986a6afa9d0c74bfb9996df79773183ddcd0d",
+  "session": {
+    "sessionId": "aider-acme-shop-5963150e-0-2026-03-08",
+    "source": "live",
+    "timestamp": "2026-03-08T14:00:00.000Z",
+    "agent": "aider",
+    "agentLabel": "Aider",
+    "model": "gpt-4o",
+    "projectName": "acme-shop",
+    "projectPath": "/fixtures/acme-shop",
+    "branch": "(see git log)",
+    "originalPrompt": "Rename the checkout helper and update its callers",
+    "declaredGoal": "Rename the checkout helper and update its callers",
+    "initialPlan": [],
+    "status": "needs-review",
+    "outcome": "All 12 checkout tests passed after the rename, callers updated in both modules.",
+    "stats": {
+      "filesAnalyzed": 0,
+      "filesModified": 2,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "commandsRun": 1,
+      "testsRun": 1,
+      "testsFailed": 0,
+      "durationMinutes": 1
+    },
+    "summary": {
+      "text": "Ingested from a live Aider transcript. The agent changed 2 files (+0 −0) across src, ran 1 command and 1 test run.",
+      "impactedAreas": [
+        "src"
+      ],
+      "riskWarnings": []
+    },
+    "systemAreas": [
+      {
+        "id": "area-src",
+        "label": "src",
+        "critical": false,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "src/checkout/helpers.py",
+        "changeType": "modified",
+        "language": "py",
+        "linesAdded": 0,
+        "linesRemoved": 0,
+        "areaId": "area-src",
+        "riskFlags": [],
+        "summary": "Modified — +0 −0 lines in this session.",
+        "hunks": []
+      },
+      {
+        "id": "lf-2",
+        "path": "src/checkout/views.py",
+        "changeType": "modified",
+        "language": "py",
+        "linesAdded": 0,
+        "linesRemoved": 0,
+        "areaId": "area-src",
+        "riskFlags": [],
+        "summary": "Modified — +0 −0 lines in this session.",
+        "hunks": []
+      }
+    ],
+    "timeline": [
+      {
+        "timestamp": "2026-03-08T14:00:00.000Z",
+        "kind": "note",
+        "title": "User: Rename the checkout helper and update its callers",
+        "id": "ev-1"
+      },
+      {
+        "timestamp": "2026-03-08T14:00:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited src/checkout/helpers.py",
+        "filePath": "src/checkout/helpers.py",
+        "id": "ev-2"
+      },
+      {
+        "timestamp": "2026-03-08T14:00:00.000Z",
+        "kind": "file-edit",
+        "title": "Edited src/checkout/views.py",
+        "filePath": "src/checkout/views.py",
+        "id": "ev-3"
+      },
+      {
+        "timestamp": "2026-03-08T14:00:00.000Z",
+        "kind": "command",
+        "title": "Commit abc1234: Rename checkout helper to compute_totals",
+        "id": "ev-4"
+      },
+      {
+        "timestamp": "2026-03-08T14:00:00.000Z",
+        "kind": "test-run",
+        "title": "pytest tests/checkout",
+        "id": "ev-5"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 4,
+        "level": "low",
+        "rationale": "2 files changed, +0 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": []
+  }
+}

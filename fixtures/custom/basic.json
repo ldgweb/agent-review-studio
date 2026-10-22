@@ -1,0 +1,32 @@
+{
+  "format": "ars/v1",
+  "sessionId": "inhouse-42",
+  "agentLabel": "Acme Refactor Bot",
+  "model": "acme-llm-2",
+  "timestamp": "2026-03-09T08:00:00Z",
+  "projectName": "acme-shop",
+  "branch": "chore/billing",
+  "prompt": "Refactor the billing module to use the new tax service",
+  "outcome": "Billing now calls TaxService; the old inline table was removed.",
+  "plan": ["Map current tax usage", "Introduce TaxService client", "Delete legacy table"],
+  "timeline": [
+    { "time": "2026-03-09T08:01:00Z", "kind": "analysis", "title": "Scanned billing module" },
+    { "time": "2026-03-09T08:05:00Z", "kind": "file-edit", "title": "Rewrote tax lookup", "detail": "Replaced the inline table with TaxService calls" },
+    { "time": "2026-03-09T08:09:00Z", "kind": "bogus-kind", "title": "Falls back to note" }
+  ],
+  "files": [
+    {
+      "path": "src/billing/tax.py",
+      "diff": "@@ -4,3 +4,4 @@\n-TAX_TABLE = {\"IT\": 0.22}\n+from services.tax import TaxService\n+tax_service = TaxService()\n context line"
+    },
+    {
+      "path": "src/services/tax.py",
+      "content": "class TaxService:\n    def rate(self, country):\n        return fetch_rate(country)\n"
+    },
+    {
+      "path": "src/config/settings.py",
+      "diff": "@@ -0,0 +1,3 @@\n+import os\n+api_key = \"AKIAIOSFODNN7EXAMPLE\"\n+# TODO load key from env"
+    }
+  ],
+  "stats": { "commandsRun": 3, "testsRun": 1, "testsFailed": 0, "filesAnalyzed": 7, "durationMinutes": 9 }
+}

@@ -1,0 +1,53 @@
+{
+  "format": "ars/v1",
+  "sessionId": "ars-demo-tour",
+  "agentLabel": "ARS Tour (sample)",
+  "model": "demo-model",
+  "projectName": "demo-shop",
+  "branch": "feature/checkout-discounts",
+  "prompt": "Add a discount-code feature to the checkout: percentage and fixed-amount codes, validated server-side, with an expiry date. Update the database, wire the checkout UI, and keep the tests green.\n\n(This is a SAMPLE session shipped with Agent Review Studio so you can try every part of the review before your own agents show up. Archive it when you are done — it runs in a sandbox repository and never touches your own projects.)",
+  "outcome": "Implemented discount codes end-to-end: new discounts table, validation service and checkout integration. One test was updated to match the new totals API. Note: I refactored src/checkout/discount.ts again after the last test run to simplify rounding — re-run the suite before merging.",
+  "plan": [
+    "Add a discounts table with code, type, value and expiry",
+    "Create a validation service with server-side expiry checks",
+    "Wire the discount field into the checkout flow",
+    "Update the checkout tests for the new totals"
+  ],
+  "stats": { "filesAnalyzed": 14, "commandsRun": 7, "testsRun": 12, "testsFailed": 0, "durationMinutes": 23 },
+  "timeline": [
+    { "time": "2026-07-20T09:02:00Z", "kind": "plan", "title": "Declared the 4-step plan", "detail": "Schema first, then the service, then UI wiring, tests last." },
+    { "time": "2026-07-20T09:03:10Z", "kind": "file-read", "title": "Read src/checkout/totals.ts", "filePath": "src/checkout/totals.ts" },
+    { "time": "2026-07-20T09:05:40Z", "kind": "file-edit", "title": "Created the discounts migration", "filePath": "db/migrations/2026_add_discounts.sql" },
+    { "time": "2026-07-20T09:09:15Z", "kind": "file-edit", "title": "Wrote the validation service", "filePath": "src/auth/session.ts" },
+    { "time": "2026-07-20T09:12:30Z", "kind": "file-edit", "title": "Wired discounts into the checkout", "filePath": "src/checkout/discount.ts" },
+    { "time": "2026-07-20T09:14:00Z", "kind": "test-run", "title": "npm test — 1 failing", "command": "npm test", "exitCode": 1, "detail": "checkout.test.ts: expected total 90.00, received 90.001 — rounding drift in applyDiscount()." },
+    { "time": "2026-07-20T09:16:20Z", "kind": "file-edit", "title": "Fixed rounding, updated the test", "filePath": "tests/checkout.test.ts" },
+    { "time": "2026-07-20T09:17:05Z", "kind": "test-run", "title": "npm test — all green", "command": "npm test", "exitCode": 0, "detail": "12 passed." },
+    { "time": "2026-07-20T09:19:40Z", "kind": "file-edit", "title": "Refactored rounding AFTER the green run", "filePath": "src/checkout/discount.ts", "detail": "Simplified toCents() — this edit was never re-tested: ARS flags it below." },
+    { "time": "2026-07-20T09:21:00Z", "kind": "note", "title": "Self-report written", "detail": "Suggested re-running the suite before merge." }
+  ],
+  "files": [
+    {
+      "path": "src/auth/session.ts",
+      "diff": "@@ -12,6 +12,14 @@\n export function sessionUser(req: Request): User | null {\n   return verify(req.cookies.session);\n }\n+\n+// Validates a discount code for the signed-in user.\n+export async function validateDiscount(req: Request, code: string): Promise<Discount | null> {\n+  const user = sessionUser(req);\n+  if (!user) return null;\n+  const apiKey = \"demo_not_a_real_key_0000\";\n+  const found = await discountService.lookup(code, { apiKey });\n+  return found && found.expiresAt > Date.now() ? found : null;\n+}"
+    },
+    {
+      "path": "db/migrations/2026_add_discounts.sql",
+      "created": true,
+      "diff": "@@ -0,0 +1,9 @@\n+CREATE TABLE discounts (\n+  id INTEGER PRIMARY KEY,\n+  code TEXT NOT NULL UNIQUE,\n+  kind TEXT NOT NULL CHECK (kind IN ('percent','fixed')),\n+  value NUMERIC NOT NULL,\n+  expires_at TIMESTAMP NOT NULL,\n+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n+);\n+CREATE INDEX idx_discounts_code ON discounts (code);"
+    },
+    {
+      "path": "src/checkout/discount.ts",
+      "created": true,
+      "diff": "@@ -0,0 +1,22 @@\n+import { validateDiscount } from '../auth/session';\n+\n+// TODO: move the rounding rules into config before launch\n+export async function applyDiscount(req: Request, cart: Cart, code: string): Promise<Cart> {\n+  const discount = await validateDiscount(req, code);\n+  if (!discount) return cart;\n+  console.log('applying discount', code);\n+  const total = discount.kind === 'percent'\n+    ? cart.total * (1 - discount.value / 100)\n+    : cart.total - discount.value;\n+  return { ...cart, total: toCents(total), discountCode: code };\n+}\n+\n+function toCents(amount: number): number {\n+  return Math.round(amount * 100) / 100;\n+}\n+\n+export function describeDiscount(d: Discount): string {\n+  return d.kind === 'percent' ? `${d.value}% off` : `${d.value} off`;\n+}\n+\n+export const DISCOUNT_FIELD = 'discount-code';"
+    },
+    {
+      "path": "tests/checkout.test.ts",
+      "diff": "@@ -18,20 +18,8 @@\n describe('checkout totals', () => {\n-  it('sums line items', () => {\n-    expect(total(cartWith(2)).total).toBe(40);\n-  });\n-\n-  it('applies tax per region', () => {\n-    expect(total(cartWith(1), 'EU').total).toBe(24.4);\n-  });\n-\n-  it('rejects negative quantities', () => {\n-    expect(() => cartWith(-1)).toThrow();\n-  });\n-\n-  it('keeps totals stable across currencies', () => {\n-    expect(total(cartWith(3), 'US', 'usd').total).toBe(60);\n-  });\n+  it('applies a percent discount', () => {\n+    expect(applyTestDiscount(cartWith(2), 'SAVE10').total).toBe(36);\n+  });\n   it('never goes below zero', () => {\n     expect(applyTestDiscount(cartWith(1), 'HUGE').total).toBe(0);\n   });"
+    },
+    {
+      "path": "README.md",
+      "diff": "@@ -40,3 +40,6 @@\n ## Payments\n \n Checkout supports cards and wallets.\n+\n+## Discount codes\n+Percentage or fixed-amount, validated server-side, with expiry dates."
+    }
+  ]
+}

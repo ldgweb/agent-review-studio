@@ -1,0 +1,114 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.65;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden; /* app shell: the window never scrolls, regions do */
+}
+
+/* App shell: top bar + content column filling the window */
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+h1 {
+  letter-spacing: -0.015em;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-1);
+  border-radius: 5px;
+  border: 2px solid var(--bg-0);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* App-like feel: UI chrome is not selectable or draggable; content stays
+   copyable (diffs, prose, inputs — this is a review tool). */
+button,
+summary,
+nav,
+th,
+.badge,
+.chip,
+.rail-tab,
+.section-label,
+.stat-label,
+.topbar,
+.file-nav-item {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+img,
+svg {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Section label used across all views: small, uppercase, faint */
+.section-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  margin-bottom: var(--sp-2);
+}

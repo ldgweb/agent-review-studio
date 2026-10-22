@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an improvement to reviewing agent work
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today when reviewing an agent session?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would help? Mention which evidence the app could use to support it.

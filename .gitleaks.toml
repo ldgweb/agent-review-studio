@@ -1,0 +1,10 @@
+title = "Agent Review Studio secret scanning"
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Exact synthetic credentials used by redaction regression tests"
+condition = "AND"
+paths = ['''app/src-tauri/src/(core/policy|cli/render)\.rs$''']
+regexTarget = "secret"
+regexes = ['''^AKIAABCDEFGHIJKLMNOP$''', '''^abcd1234efgh5678ijkl$''']

@@ -1,0 +1,233 @@
+{
+  "sessionHash": "b1a6b82e99143aae12485b72112eb22e6ef93bbcefaae5c7d285d7bc84845ad3",
+  "session": {
+    "sessionId": "inhouse-42",
+    "source": "live",
+    "timestamp": "2026-03-09T08:00:00.000Z",
+    "agent": "custom",
+    "agentLabel": "Acme Refactor Bot",
+    "model": "acme-llm-2",
+    "projectName": "acme-shop",
+    "branch": "chore/billing",
+    "originalPrompt": "Refactor the billing module to use the new tax service",
+    "declaredGoal": "Refactor the billing module to use the new tax service",
+    "initialPlan": [
+      "Map current tax usage",
+      "Introduce TaxService client",
+      "Delete legacy table"
+    ],
+    "status": "needs-review",
+    "outcome": "Billing now calls TaxService; the old inline table was removed.",
+    "stats": {
+      "filesAnalyzed": 7,
+      "filesModified": 3,
+      "linesAdded": 9,
+      "linesRemoved": 1,
+      "commandsRun": 3,
+      "testsRun": 1,
+      "testsFailed": 0,
+      "durationMinutes": 9
+    },
+    "summary": {
+      "text": "Ingested from a live Acme Refactor Bot transcript. The agent changed 3 files (+9 −1) across src, ran 3 commands and 1 test run.",
+      "impactedAreas": [
+        "src"
+      ],
+      "riskWarnings": []
+    },
+    "systemAreas": [
+      {
+        "id": "area-src",
+        "label": "src",
+        "critical": false,
+        "dependsOn": []
+      }
+    ],
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "src/billing/tax.py",
+        "changeType": "modified",
+        "language": "py",
+        "linesAdded": 2,
+        "linesRemoved": 1,
+        "areaId": "area-src",
+        "riskFlags": [],
+        "summary": "Modified — +2 −1 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ -4,3 +4,4 @@",
+            "lines": [
+              {
+                "kind": "del",
+                "text": "TAX_TABLE = {\"IT\": 0.22}",
+                "oldLine": 4
+              },
+              {
+                "kind": "add",
+                "text": "from services.tax import TaxService",
+                "newLine": 4
+              },
+              {
+                "kind": "add",
+                "text": "tax_service = TaxService()",
+                "newLine": 5
+              },
+              {
+                "kind": "context",
+                "text": "context line",
+                "oldLine": 5,
+                "newLine": 6
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lf-2",
+        "path": "src/services/tax.py",
+        "changeType": "created",
+        "language": "py",
+        "linesAdded": 4,
+        "linesRemoved": 0,
+        "areaId": "area-src",
+        "riskFlags": [],
+        "summary": "Created — +4 −0 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ new file — 4 lines @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "class TaxService:",
+                "newLine": 1
+              },
+              {
+                "kind": "add",
+                "text": "    def rate(self, country):",
+                "newLine": 2
+              },
+              {
+                "kind": "add",
+                "text": "        return fetch_rate(country)",
+                "newLine": 3
+              },
+              {
+                "kind": "add",
+                "text": "",
+                "newLine": 4
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "lf-3",
+        "path": "src/config/settings.py",
+        "changeType": "modified",
+        "language": "py",
+        "linesAdded": 3,
+        "linesRemoved": 0,
+        "areaId": "area-src",
+        "riskFlags": [],
+        "summary": "Modified — +3 −0 lines in this session.",
+        "hunks": [
+          {
+            "header": "@@ -0,0 +1,3 @@",
+            "lines": [
+              {
+                "kind": "add",
+                "text": "import os",
+                "newLine": 1
+              },
+              {
+                "kind": "add",
+                "text": "api_key = \"AKIAIOSFODNN7EXAMPLE\"",
+                "newLine": 2
+              },
+              {
+                "kind": "add",
+                "text": "# TODO load key from env",
+                "newLine": 3
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "timeline": [
+      {
+        "id": "ev-1",
+        "timestamp": "2026-03-09T08:01:00.000Z",
+        "kind": "analysis",
+        "title": "Scanned billing module"
+      },
+      {
+        "id": "ev-2",
+        "timestamp": "2026-03-09T08:05:00.000Z",
+        "kind": "file-edit",
+        "title": "Rewrote tax lookup",
+        "detail": "Replaced the inline table with TaxService calls"
+      },
+      {
+        "id": "ev-3",
+        "timestamp": "2026-03-09T08:09:00.000Z",
+        "kind": "note",
+        "title": "Falls back to note"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 6,
+        "level": "low",
+        "rationale": "3 files changed, +9 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "findings": [
+      {
+        "id": "lc-1",
+        "source": "local",
+        "kind": "issue",
+        "severity": "high",
+        "dimension": "security",
+        "title": "Possible hardcoded secret",
+        "body": "A secret-like value appears in an added line. Move it to configuration or a secret store.",
+        "filePath": "src/config/settings.py",
+        "line": 2
+      },
+      {
+        "id": "lc-2",
+        "source": "local",
+        "kind": "suggestion",
+        "severity": "low",
+        "title": "Debug/diagnostic or TODO left in the change",
+        "body": "This added line looks like a leftover debug statement or an unresolved TODO/FIXME.",
+        "filePath": "src/config/settings.py",
+        "line": 3
+      }
+    ]
+  }
+}

@@ -1,0 +1,89 @@
+# Release: on a `v*` tag, rerun every check, build the Windows installer and
+# portable ZIP, and create a draft GitHub release to inspect before publishing.
+# No build cache here: release binaries are always built from a clean state.
+
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    needs: secrets
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the pinned Rust toolchain
+        working-directory: app/src-tauri
+        run: rustup toolchain install
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $tagVersion = $env:RELEASE_TAG.TrimStart('v')
+          $package = Get-Content app/package.json -Raw | ConvertFrom-Json
+          $tauri = Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $cargo = Select-String -Path app/src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1
+          if ($package.version -ne $tagVersion -or $tauri.version -ne $tagVersion -or $cargo.Matches.Groups[1].Value -ne $tagVersion) { throw 'Tag and package versions differ' }
+      - name: Install and verify
+        working-directory: app
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run audit:rust
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fmt --check --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo clippy --release --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --release --locked --manifest-path src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run tauri -- build --ci -- --locked
+      - name: Package portable executables
+        shell: pwsh
+        run: |
+          $cli = Get-Item app/src-tauri/target/release/ars.exe
+          if ($cli.Length -eq 0) { throw 'ars.exe is empty: the CLI sidecar was not staged' }
+          New-Item -ItemType Directory -Path release-files | Out-Null
+          Copy-Item app/src-tauri/target/release/agent-review-studio.exe, $cli.FullName, LICENSE.md, README.md release-files/
+          Compress-Archive -Path release-files/* -DestinationPath agent-review-studio-windows-x64-portable.zip
+          $assets = @(Get-Item agent-review-studio-windows-x64-portable.zip) + @(Get-ChildItem app/src-tauri/target/release/bundle/nsis/*.exe)
+          $assets | ForEach-Object { "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content SHA256SUMS.txt
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $assets = @(Get-Item agent-review-studio-windows-x64-portable.zip, SHA256SUMS.txt) + @(Get-ChildItem app/src-tauri/target/release/bundle/nsis/*.exe)
+          gh release create $env:RELEASE_TAG --draft --title "Agent Review Studio $env:RELEASE_TAG (Windows beta)" --generate-notes @($assets.FullName)
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.28.0
+      GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Scan the full history for secrets (pinned, checksum-verified gitleaks)
+        run: |
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks git --redact --verbose --config .gitleaks.toml .

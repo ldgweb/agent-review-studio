@@ -1,0 +1,139 @@
+# CI: the checks that gate every change: typecheck and frontend build, review
+# regressions (npm test), dependency audits, Rust formatting and lints, the
+# fixture contract (cargo test) and a secret scan. Windows runner: it needs no
+# system webkit packages and matches the primary target.
+#
+# core-unix builds the Rust core and the ars CLI on Linux and macOS and runs
+# the same tests there (path case rules, git plumbing, fixtures). Windows is
+# still the only released platform; formatting, lints and audits are gated
+# once, on Windows.
+#
+# Third-party actions are pinned to commit SHAs; Dependabot proposes updates.
+# The Rust toolchain comes from app/src-tauri/rust-toolchain.toml.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install the pinned Rust toolchain
+        working-directory: app/src-tauri
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install npm dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Typecheck + frontend build
+        working-directory: app
+        run: npm run build
+
+      - name: Review regressions
+        working-directory: app
+        run: npm test
+
+      - name: Dependency audits
+        working-directory: app
+        run: |
+          npm audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run audit:rust
+
+      - name: Rust formatting and lints
+        working-directory: app/src-tauri
+        run: |
+          cargo fmt --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo clippy --release --locked --all-targets -- -D warnings
+
+      - name: Core tests (fixture contract)
+        working-directory: app/src-tauri
+        run: cargo test --release --locked
+
+  core-unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Tauri 2's Linux prerequisites (WebKitGTK 4.1 and friends); the
+      # webview crates link against them even for `cargo test`.
+      - name: Install Tauri system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential pkg-config
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install the pinned Rust toolchain
+        working-directory: app/src-tauri
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app/src-tauri
+
+      # Same order as the Windows gate: bundled builds embed app/dist at
+      # compile time (plain `cargo test` uses devUrl, but keep them aligned).
+      - name: Frontend build
+        working-directory: app
+        run: npm ci && npm run build
+
+      - name: Core tests (fixture contract)
+        working-directory: app/src-tauri
+        run: cargo test --release --locked
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.28.0
+      GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Scan the full history for secrets (pinned, checksum-verified gitleaks)
+        run: |
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks git --redact --verbose --config .gitleaks.toml .
