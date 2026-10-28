@@ -1149,7 +1149,7 @@ impl ProjectRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_core::git::{git, test_repo};
+    use crate::app_core::git::{git, test_repo, TemporaryDir};
 
     /// Machine-dependent smoke, run explicitly:
     /// `ARS_SMOKE_PROJECT=<repo> cargo test --release --lib smoke_review -- --ignored --nocapture`.
@@ -1225,10 +1225,17 @@ mod tests {
         assert_eq!(git(&root, &["status", "--porcelain"]).out.trim(), "M a.txt");
     }
 
+    /// The test repository as Git names it. A temp path can have another
+    /// name (a short one on Windows, /private/var on macOS), and the stored
+    /// state is keyed by Git's.
+    fn git_root(dir: &TemporaryDir) -> String {
+        changes::toplevel(dir.0.to_str().unwrap()).expect("toplevel")
+    }
+
     #[test]
     fn feedback_gives_the_agent_the_review_and_starts_the_next_round() {
         let dir = test_repo();
-        let root = dir.0.to_str().unwrap().replace('\\', "/");
+        let root = git_root(&dir);
         std::fs::write(dir.0.join("b.txt"), "agent wrote this\n").unwrap();
         let none = feedback(&root).expect("feedback");
         assert_eq!((none.items, none.undecided), (0, 1), "nothing asked yet");
@@ -1277,7 +1284,7 @@ mod tests {
     #[test]
     fn open_comments_carry_on_and_feedback_twice_repeats_itself() {
         let dir = test_repo();
-        let root = dir.0.to_str().unwrap().replace('\\', "/");
+        let root = git_root(&dir);
         std::fs::write(dir.0.join("a.txt"), "after\n").unwrap();
         let review = build(&root).expect("review");
         let hunk = review.files[0].hunks[0].clone();
@@ -1349,7 +1356,7 @@ mod tests {
     #[test]
     fn saving_drops_old_verdicts_on_changes_that_are_gone() {
         let dir = test_repo();
-        let root = dir.0.to_str().unwrap().replace('\\', "/");
+        let root = git_root(&dir);
         std::fs::write(dir.0.join("a.txt"), "now\n").unwrap();
         let review = build(&root).expect("review");
         let live = review.files[0].hunks[0].id.clone();
