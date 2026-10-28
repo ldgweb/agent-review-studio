@@ -1,11 +1,11 @@
-// VS Code Copilot adapter — reads VS Code Copilot Chat
-// sessions (ask/edit/agent mode) from workspaceStorage/<hash>/chatSessions/.
+// VS Code Copilot adapter: reads VS Code Copilot Chat sessions
+// (ask/edit/agent mode) from workspaceStorage/<hash>/chatSessions/.
 // File edits arrive as `textEditGroup` response parts (uri + inserted text
 // with real line numbers); tool calls as `toolInvocationSerialized` parts.
-// The transcript stores no "before" content, so hunks are insert-shaped —
-// the git enrichment replaces them with real working-tree diffs at serve
-// time. Defensive by design: undocumented internal format, guarded field
-// access, malformed files skipped.
+// The transcript stores no "before" content, so its hunks are insert-only.
+// The project review takes the real diff from Git; these sessions add
+// file-level context. Defensive by design: undocumented internal format,
+// guarded field access, malformed files skipped.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -66,7 +66,7 @@ fn uri_to_path(uri: &str) -> String {
     p
 }
 
-/// Path of a URI value — {fsPath} first, then {external|path}.
+/// Path of a URI value: {fsPath} first, then {external|path}.
 fn path_of_uri(uri: Option<&Value>) -> String {
     let uri = match uri.filter(|u| u.is_object()) {
         Some(u) => u,
@@ -236,7 +236,7 @@ pub fn parse_copilot_session(
             .and_then(Value::as_array)
             .unwrap_or(&empty_parts)
         {
-            // Markdown chunks have no kind — they are the assistant's prose
+            // Markdown chunks have no kind: they are the assistant's prose
             let kind_is_string = part.get("kind").map(Value::is_string).unwrap_or(false);
             if !kind_is_string {
                 if let Some(value) = part.get("value").and_then(Value::as_str) {
@@ -311,7 +311,7 @@ pub fn parse_copilot_session(
                         lines: hunk_lines,
                     });
                 }
-                // Streaming produces many parts per file — one timeline event per stretch
+                // Streaming produces many parts per file: one timeline event per stretch
                 if files[idx].path != last_edited_path {
                     let path = files[idx].path.clone();
                     let mut ev = TimelineEventDraft::new(
@@ -576,7 +576,7 @@ impl SessionAdapter for CopilotAdapter {
             Ok(entries) => entries,
             Err(_) => {
                 status.hint = Some(
-                    "No VS Code workspace storage found — is VS Code installed on this machine?"
+                    "No VS Code workspace storage found. Is VS Code installed on this machine?"
                         .to_string(),
                 );
                 return CollectResult {
@@ -642,7 +642,7 @@ impl SessionAdapter for CopilotAdapter {
         if sessions.is_empty() {
             status.hint = Some(
                 if chats_seen > 0 {
-                    "Copilot chats found but none edited files — ask/plan conversations are not reviewable."
+                    "Copilot chats found, but none edited files. Ask and plan conversations have nothing to review."
                 } else {
                     "No Copilot chat sessions found. Agent/edit-mode sessions appear here after Copilot changes files."
                 }

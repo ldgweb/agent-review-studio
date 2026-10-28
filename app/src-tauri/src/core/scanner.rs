@@ -1,12 +1,12 @@
-// The scanner — decouples SCANNING (adapters → normalize → SQLite) from
+// The scanner keeps SCANNING (adapters → normalize → SQLite) apart from
 // SERVING (`GET /sessions`). Serving reads an in-memory snapshot and never
-// scans; scans run in the background, debounced behind filesystem events,
-// plus a slow poll tick for the sources we deliberately do not watch.
+// scans. Scans run in the background, debounced behind filesystem events,
+// plus a slow tick for the sources that are not watched.
 //
 // The version counter only bumps when the *outcome* of a scan changes
-// (the change signature), not on every filesystem event — Cursor rewrites
-// its state.vscdb continuously while open, and without this gate the 5s
-// frontend poll turns that into a permanent rescan-and-refetch storm.
+// (the change signature), not on every filesystem event. Cursor rewrites
+// its state.vscdb continuously while open; without this gate, every write
+// would notify the window and make it fetch the sessions again.
 
 use super::adapters::{
     aider::AiderAdapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter,
@@ -27,8 +27,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-/// Served history caps: the freshest N in each bucket stay addressable in
-/// the inbox; older rows stay in SQLite (and reachable by direct id).
+/// Served history caps: the freshest N in each bucket (shown, hidden) stay
+/// listed in the app; older rows stay in SQLite (and reachable by id).
 const MAX_SERVED_ACTIVE: usize = 200;
 const MAX_SERVED_ARCHIVED: usize = 200;
 
@@ -83,18 +83,19 @@ static SCAN_MUTEX: Mutex<()> = Mutex::new(());
 static SOURCES_VERSION: AtomicU64 = AtomicU64::new(1);
 static LAST_SIGNATURE: AtomicU64 = AtomicU64::new(0);
 
-// Watcher plumbing. The callback only marks state dirty — the debounce loop
+// Watcher plumbing. The callback only marks state dirty; the debounce loop
 // decides when to actually rescan. No version bump from raw FS events.
 static WATCHER: Lazy<Mutex<Option<(String, notify::RecommendedWatcher)>>> =
     Lazy::new(|| Mutex::new(None));
 static DIRTY: AtomicBool = AtomicBool::new(false);
 static LAST_EVENT: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
-/// True only in the desktop process (start_background ran) — the one-shot
+/// True only in the desktop process (start_background ran): the one-shot
 /// CLI scan must not install watchers or spawn threads.
 static BACKGROUND: AtomicBool = AtomicBool::new(false);
 
-pub fn version() -> u64 {
-    SOURCES_VERSION.load(Ordering::Relaxed)
+/// True in the desktop process (background scanning runs there only).
+pub fn is_desktop() -> bool {
+    BACKGROUND.load(Ordering::Relaxed)
 }
 
 pub fn snapshot() -> Arc<ScanState> {
@@ -122,26 +123,55 @@ pub fn rescan() -> Arc<ScanState> {
     do_scan()
 }
 
-/// Full session for one id: the live record's Arc, or the stored payload.
-/// Sessions older than the served caps stay reachable here by direct id.
-pub fn session_by_id(id: &str) -> Option<Arc<AgentSession>> {
-    if let Some(record) = snapshot().by_id.get(id) {
-        if record.live {
-            return Some(record.session.clone());
+/// The newest sessions of the project at `root`, newest activity first.
+/// Sources that can find a project's sessions directly (Claude Code keys its
+/// folders by project path) are asked directly; the others come from the
+/// index of the last full scan. Never waits for a full scan.
+pub fn project_sessions(root: &str, limit: usize) -> Vec<AgentSession> {
+    let config = load_config();
+    let state = snapshot();
+    let mut out: Vec<AgentSession> = Vec::new();
+    for adapter in ADAPTERS.iter() {
+        let cfg = adapter_config_of(&config, adapter.id());
+        if !cfg.enabled {
+            continue;
+        }
+        let direct = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            adapter.project_sessions(&cfg, root, limit)
+        }))
+        .ok()
+        .flatten();
+        match direct {
+            Some(found) => out.extend(found),
+            None => out.extend(
+                state
+                    .order
+                    .iter()
+                    .filter_map(|id| state.by_id.get(id))
+                    .filter(|r| r.live && r.session.agent == adapter.id())
+                    .filter(|r| {
+                        r.session
+                            .project_path
+                            .as_deref()
+                            .is_some_and(|p| super::paths::is_within(p, root))
+                    })
+                    .map(|r| (*r.session).clone()),
+            ),
         }
     }
-    let payload = storage::get_session_payload(id)?;
-    serde_json::from_value::<AgentSession>(payload)
-        .ok()
-        .map(Arc::new)
-}
-
-pub fn is_archived(id: &str) -> bool {
-    snapshot()
-        .by_id
-        .get(id)
-        .map(|r| r.archived)
-        .unwrap_or(false)
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|s| seen.insert(s.session_id.clone()));
+    let activity = |s: &AgentSession| {
+        s.timeline
+            .iter()
+            .rev()
+            .find_map(|e| super::normalize::parse_date(&e.timestamp))
+            .or_else(|| super::normalize::parse_date(&s.timestamp))
+            .map(|d| d.timestamp_millis())
+    };
+    out.sort_by_cached_key(|s| std::cmp::Reverse(activity(s)));
+    out.truncate(limit);
+    out
 }
 
 /// Desktop only: watcher + debounce loop + slow poll tick. Never the CLI.
@@ -193,6 +223,18 @@ fn adapter_config_of(config: &AppConfig, id: &str) -> AdapterConfig {
     }
 }
 
+/// Labels of the sources switched off in Settings (the review says when
+/// that is why a change has no explanation).
+pub fn disabled_source_labels() -> Vec<String> {
+    let config = load_config();
+    let off = disabled_sources(&config);
+    ADAPTERS
+        .iter()
+        .filter(|a| off.contains(a.id()))
+        .map(|a| a.label().to_string())
+        .collect()
+}
+
 /// Ids of the adapters switched off in Settings. A session's `agent` is
 /// the id of the adapter that produced it.
 fn disabled_sources(config: &AppConfig) -> std::collections::HashSet<&'static str> {
@@ -242,7 +284,7 @@ fn ensure_watchers(config: &AppConfig) {
     *guard = Some((key, watcher));
 }
 
-/// Newest first by parsed instant — adapters emit mixed formats and UTC
+/// Newest first by parsed instant: adapters emit mixed formats and UTC
 /// offsets, so raw string order is wrong. Unparseable timestamps sort last;
 /// the sort is stable and serialized timestamps are left untouched.
 fn sort_newest_first<T>(items: &mut [T], timestamp: impl Fn(&T) -> &String) {
@@ -323,7 +365,7 @@ fn do_scan() -> Arc<ScanState> {
         storage::upsert_sessions_ref(&changed);
     }
 
-    // 3. Merge in stored history (summary shape) and archived flags.
+    // 3. Merge in stored history (summary shape) and hidden (archived) flags.
     let archived_map = storage::archived_map();
     let mut records: Vec<Arc<SessionRecord>> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -403,7 +445,11 @@ fn do_scan() -> Arc<ScanState> {
     let previous = LAST_SIGNATURE.swap(signature, Ordering::Relaxed);
     let first_scan = snapshot().generation == 0;
     if signature != previous || first_scan {
-        SOURCES_VERSION.fetch_add(1, Ordering::Relaxed);
+        let version = SOURCES_VERSION.fetch_add(1, Ordering::Relaxed) + 1;
+        super::events::emit(
+            "ars://sessions-changed",
+            serde_json::json!({ "version": version }),
+        );
     }
 
     let next = Arc::new(ScanState {

@@ -1,4 +1,4 @@
-// OpenAI Codex CLI adapter — parses rollout JSONL files from ~/.codex/sessions.
+// OpenAI Codex CLI adapter: parses rollout JSONL files from ~/.codex/sessions.
 // Defensive by design: Codex's format evolves, so every field access is
 // guarded and unrecognized records are skipped rather than failing the scan.
 
@@ -85,9 +85,17 @@ fn flush_hunk(file_map: &mut [RawFile], current: Option<usize>, hunk_lines: &mut
     }
 }
 
+/// One file section of an apply_patch envelope: (path, added, removed).
+type PatchSection = (String, Vec<String>, Vec<String>);
+
 /// Parse Codex apply_patch envelopes: "*** Update File: x" / "*** Add File: y"
-/// / "*** Delete File: z"
-fn parse_apply_patch(input: &str, file_map: &mut Vec<RawFile>) -> Vec<String> {
+/// / "*** Delete File: z". `sections` receives each file section's changed
+/// lines (the attribution input).
+fn parse_apply_patch(
+    input: &str,
+    file_map: &mut Vec<RawFile>,
+    sections: &mut Vec<PatchSection>,
+) -> Vec<String> {
     let mut touched: Vec<String> = Vec::new();
     let mut current: Option<usize> = None;
     let mut hunk_lines: Vec<DiffLine> = Vec::new();
@@ -116,6 +124,7 @@ fn parse_apply_patch(input: &str, file_map: &mut Vec<RawFile>) -> Vec<String> {
             }
             file_map[idx].deleted = action == "Delete";
             current = Some(idx);
+            sections.push((path.clone(), Vec::new(), Vec::new()));
             touched.push(path);
             continue;
         }
@@ -123,7 +132,11 @@ fn parse_apply_patch(input: &str, file_map: &mut Vec<RawFile>) -> Vec<String> {
             Some(i) if !line.starts_with("***") => i,
             _ => continue,
         };
+        let section = sections.last_mut();
         if let Some(rest) = line.strip_prefix('+') {
+            if let Some((_, added, _)) = section {
+                added.push(rest.to_string());
+            }
             file_map[idx].added += 1;
             file_map[idx].added_lines.push(rest.to_string());
             hunk_lines.push(DiffLine {
@@ -133,6 +146,9 @@ fn parse_apply_patch(input: &str, file_map: &mut Vec<RawFile>) -> Vec<String> {
                 new_line: None,
             });
         } else if let Some(rest) = line.strip_prefix('-') {
+            if let Some((_, _, removed)) = section {
+                removed.push(rest.to_string());
+            }
             file_map[idx].removed += 1;
             hunk_lines.push(DiffLine {
                 kind: DiffLineKind::Del,
@@ -153,6 +169,51 @@ fn parse_apply_patch(input: &str, file_map: &mut Vec<RawFile>) -> Vec<String> {
     }
     flush_hunk(file_map, current, &mut hunk_lines);
     touched
+}
+
+/// A new human prompt starts a turn. Codex logs a prompt both as an event
+/// and as a response item, so a repeat of the last prompt is the same turn.
+fn push_turn(turns: &mut Vec<SessionTurn>, prompt: &str, ts: &str) -> bool {
+    let prompt = truncate(prompt.trim(), 500);
+    if prompt.is_empty() || turns.last().is_some_and(|t| t.prompt == prompt) {
+        return false;
+    }
+    turns.push(SessionTurn {
+        index: turns.len() as u32,
+        prompt,
+        timestamp: ts.to_string(),
+    });
+    true
+}
+
+/// The recorded edits of one applied patch, attributed to the current turn.
+fn record_patch(
+    sections: Vec<PatchSection>,
+    edits: &mut Vec<RecordedEdit>,
+    turns: &[SessionTurn],
+    rationale: &str,
+    ts: &str,
+    timeline: &[TimelineEvent],
+) {
+    let event_id = timeline.last().map(|e| e.id.clone());
+    for (path, added, removed) in sections {
+        let mut edit = RecordedEdit {
+            seq: 0,
+            path,
+            added: Vec::new(),
+            removed: Vec::new(),
+            turn: turns.last().map(|t| t.index).unwrap_or(0),
+            rationale: rationale.to_string(),
+            timestamp: ts.to_string(),
+            event_id: event_id.clone(),
+        };
+        added.iter().for_each(|l| edit.push_added(l));
+        removed.iter().for_each(|l| edit.push_removed(l));
+        if edit.line_count() > 0 {
+            edit.seq = edits.len() as u32 + 1;
+            edits.push(edit);
+        }
+    }
 }
 
 pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Option<AgentSession> {
@@ -187,6 +248,10 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
     // call_id → command
     let mut call_by_id: Vec<(String, String)> = Vec::new();
     let mut event_seq: u64 = 0;
+    let mut turns: Vec<SessionTurn> = Vec::new();
+    let mut edits: Vec<RecordedEdit> = Vec::new();
+    // The agent's latest message in the current turn (edit rationale)
+    let mut rationale = String::new();
 
     for rec in &records {
         let ts_raw = rec.get("timestamp");
@@ -230,8 +295,12 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
             if kind == "user_message" && !message.is_empty() && original_prompt.is_empty() {
                 original_prompt = truncate(message, 1500);
             }
+            if kind == "user_message" && push_turn(&mut turns, message, &ts) {
+                rationale.clear();
+            }
             if kind == "agent_message" && !message.is_empty() {
                 last_agent_text = message.to_string();
+                rationale = truncate(message.trim(), 600);
             }
             continue;
         }
@@ -260,8 +329,14 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
             {
                 original_prompt = truncate(&text, 1500);
             }
+            if role == "user" && !text.starts_with('<') && push_turn(&mut turns, &text, &ts) {
+                rationale.clear();
+            }
             if role == "assistant" && utf16_len(text.trim()) > 40 {
                 last_agent_text = text.trim().to_string();
+            }
+            if role == "assistant" && !text.trim().is_empty() {
+                rationale = truncate(text.trim(), 600);
             }
         } else if item_type == "reasoning" {
             // opaque; skip
@@ -281,7 +356,8 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
                         i.to_string()
                     }
                 };
-                let touched = parse_apply_patch(&input, &mut file_map);
+                let mut sections = Vec::new();
+                let touched = parse_apply_patch(&input, &mut file_map, &mut sections);
                 let joined = touched.join(", ");
                 let target = if joined.is_empty() {
                     "(files)".to_string()
@@ -297,6 +373,7 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
                         format!("Applied patch to {}", target),
                     ),
                 );
+                record_patch(sections, &mut edits, &turns, &rationale, &ts, &timeline);
             } else if SHELL_TOOL_RE.is_match(name) {
                 let cmd_raw = args.get("command");
                 let cmd_parts: Vec<String> = match cmd_raw {
@@ -311,7 +388,8 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
                     .iter()
                     .find(|c| c.contains("*** Begin Patch") || c.contains("*** Update File"));
                 if let (Some(_), Some(body)) = (patch_idx, patch_body) {
-                    let touched = parse_apply_patch(body, &mut file_map);
+                    let mut sections = Vec::new();
+                    let touched = parse_apply_patch(body, &mut file_map, &mut sections);
                     let joined = touched.join(", ");
                     let target = if joined.is_empty() {
                         "(files)".to_string()
@@ -327,6 +405,7 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
                             format!("Applied patch to {}", target),
                         ),
                     );
+                    record_patch(sections, &mut edits, &turns, &rationale, &ts, &timeline);
                 } else {
                     let is_test = TEST_COMMAND.is_match(&command);
                     commands_run += 1;
@@ -430,7 +509,7 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
         1
     };
 
-    normalize(RawSession {
+    let mut session = normalize(RawSession {
         session_id,
         timestamp: if first_ts.is_empty() {
             mtime_iso.to_string()
@@ -445,7 +524,11 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
         } else {
             basename(&cwd.replace('\\', "/"))
         },
-        project_path: None,
+        project_path: if cwd.is_empty() {
+            None
+        } else {
+            Some(cwd.clone())
+        },
         branch,
         original_prompt,
         declared_goal: None,
@@ -459,7 +542,11 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
         tests_failed,
         errors,
         duration_minutes: dur,
-    })
+    })?;
+    session.turns = turns;
+    cap_edits(&mut edits);
+    session.edits = edits;
+    Some(session)
 }
 
 fn walk_jsonl(dir: &std::path::Path, depth: i32, out: &mut Vec<(String, f64)>) {
@@ -528,7 +615,7 @@ impl SessionAdapter for CodexAdapter {
         walk_jsonl(std::path::Path::new(&dir), 4, &mut candidates);
         if candidates.is_empty() {
             status.hint = Some(
-                "No Codex CLI rollouts found — is Codex installed on this machine?".to_string(),
+                "No Codex CLI sessions found. Is Codex installed on this machine?".to_string(),
             );
             return CollectResult {
                 sessions: Vec::new(),
@@ -575,6 +662,15 @@ impl SessionAdapter for CodexAdapter {
             None
         };
         CollectResult { sessions, status }
+    }
+
+    fn project_sessions(
+        &self,
+        config: &AdapterConfig,
+        root: &str,
+        limit: usize,
+    ) -> Option<Vec<AgentSession>> {
+        Some(super::collect_for_project(self, config, root, limit))
     }
 }
 

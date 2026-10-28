@@ -1,5 +1,5 @@
-// API bridge. The native Rust core handles every route in-process through the
-// single Tauri `api` command — there is no HTTP server. Plain-browser Vite
+// API bridge. The Rust core handles every route in-process through one
+// Tauri command, `api`: there is no HTTP server. Plain-browser Vite
 // (`npm run dev`) has no API behind it; run `npm run tauri:dev` instead.
 
 import { invoke } from '@tauri-apps/api/core';
@@ -16,9 +16,9 @@ export function errorMessage(e: unknown): string {
 interface ApiInit {
   method?: string;
   body?: unknown;
-  /** Resolve with the payload even when it carries `error` — for callers that
-   * read partial data sent next to the error. Default: reject with an Error
-   * carrying the core's message. */
+  /** Resolve with the payload even when it carries `error`, for callers
+   * that read the data sent next to the error. Default: reject with an
+   * Error carrying the core's message. */
   allowError?: boolean;
 }
 

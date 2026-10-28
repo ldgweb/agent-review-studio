@@ -1,8 +1,8 @@
 // The open ingestion format (ars/v1).
 // Any agent, editor, CI job or in-house tool can be reviewed in Agent Review
 // Studio by dropping a JSON file into ~/.agent-review-studio/sessions/
-// (or any folder listed in adapters.custom.dirs). This is the escape hatch
-// for agents we don't ship a native adapter for.
+// (or any folder listed in adapters.custom.dirs). This covers agents that
+// have no native adapter.
 //
 // Minimal valid file:
 // {
@@ -11,22 +11,25 @@
 //   "prompt": "Refactor the billing module",
 //   "files": [{ "path": "src/billing.py", "diff": "@@ -1,3 +1,4 @@\n-old\n+new\n context" }]
 // }
-// Optional fields: sessionId, model, timestamp, projectName, branch, outcome,
-// plan[], timeline[{time,kind,title,detail}], files[].{created,added,removed,content},
+// Optional fields: sessionId, model, timestamp, projectName, projectPath
+// (absolute: ties the session to that project's review), branch, outcome,
+// plan[], timeline[{time,kind,title,detail,filePath,command,exitCode}],
+// files[].{created,added,removed,content},
 // stats{commandsRun,testsRun,testsFailed,filesAnalyzed,durationMinutes}.
+// One file can also hold several sessions in a "sessions" array.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
 
 use super::super::domain::{
-    AgentSession, DiffHunk, DiffLine, DiffLineKind, RawFile, RawSession, TimelineEvent,
-    TimelineEventKind,
+    cap_edits, AgentSession, DiffHunk, DiffLine, DiffLineKind, RawFile, RawSession, RecordedEdit,
+    SessionTurn, TimelineEvent, TimelineEventKind,
 };
 use super::super::normalize::{normalize, parse_date, to_iso, truncate};
 use super::{mtime_iso, mtime_ms, AdapterConfig, CollectResult, SessionAdapter};
 
-/// Guarded access — the string value or ''.
+/// Guarded access: the string value or ''.
 fn s(v: Option<&Value>) -> &str {
     v.and_then(Value::as_str).unwrap_or("")
 }
@@ -99,7 +102,7 @@ fn parse_unified_diff(diff: &str) -> ParsedDiff {
     let mut added_lines: Vec<String> = Vec::new();
 
     let cleaned = diff.replace('\r', "");
-    // A diff ending in "\n" leaves an empty final segment — not a line.
+    // A diff ending in "\n" leaves an empty final segment, not a line.
     let body = cleaned.strip_suffix('\n').unwrap_or(&cleaned);
     for line in body.split('\n') {
         // "\ No newline at end of file" annotates the previous line.
@@ -345,15 +348,58 @@ pub fn parse_ars_session(
         }
     };
 
-    normalize(RawSession {
+    // ars/v1 has no per-edit records: each file's diff counts as one edit,
+    // explained by the latest file-edit event that names the file.
+    let turns = vec![SessionTurn {
+        index: 0,
+        prompt: truncate(&prompt, 500),
+        timestamp: timestamp.clone(),
+    }];
+    let mut edits: Vec<RecordedEdit> = Vec::new();
+    for f in &files {
+        let event = timeline.iter().rev().find(|e| {
+            e.kind == TimelineEventKind::FileEdit && e.file_path.as_deref() == Some(&f.path)
+        });
+        let mut edit = RecordedEdit {
+            seq: edits.len() as u32 + 1,
+            path: f.path.clone(),
+            added: Vec::new(),
+            removed: Vec::new(),
+            turn: 0,
+            rationale: event
+                .map(|e| match &e.detail {
+                    Some(d) if !d.is_empty() => format!("{}: {}", e.title, d),
+                    _ => e.title.clone(),
+                })
+                .map(|r| truncate(&r, 600))
+                .unwrap_or_default(),
+            timestamp: event
+                .map(|e| e.timestamp.clone())
+                .unwrap_or_else(|| timestamp.clone()),
+            event_id: event.map(|e| e.id.clone()),
+        };
+        for line in f.hunks.iter().flat_map(|h| &h.lines) {
+            match line.kind {
+                DiffLineKind::Add => edit.push_added(&line.text),
+                DiffLineKind::Del => edit.push_removed(&line.text),
+                DiffLineKind::Context => {}
+            }
+        }
+        if edit.line_count() > 0 {
+            edits.push(edit);
+        }
+    }
+    cap_edits(&mut edits);
+
+    let mut session = normalize(RawSession {
         session_id,
         timestamp,
         agent: "custom".to_string(),
         agent_label: or_default("agentLabel", "Custom agent"),
         model: or_default("model", "unknown model"),
         project_name: or_default("projectName", "(unknown)"),
-        // ars/v1 extension: an absolute projectPath unlocks the git surface
-        // (working-tree enrichment, commit/revert) exactly like native sources.
+        // An absolute projectPath ties the session to that project, so its
+        // edits explain the project's review, as with native sources.
         project_path: {
             let p = s(input.get("projectPath"));
             if p.is_empty() {
@@ -375,7 +421,10 @@ pub fn parse_ars_session(
         tests_failed: stat("testsFailed", 0),
         errors: 0,
         duration_minutes: stat("durationMinutes", 1),
-    })
+    })?;
+    session.turns = turns;
+    session.edits = edits;
+    Some(session)
 }
 
 #[derive(Default)]
@@ -396,7 +445,7 @@ impl SessionAdapter for CustomAdapter {
         "Custom (ars/v1)"
     }
 
-    /// The watched folders hold flat *.json drops — non-recursive is enough.
+    /// The watched folders hold flat *.json drops: non-recursive is enough.
     fn watch_targets(&self, config: &AdapterConfig) -> Vec<super::WatchTarget> {
         config
             .dirs
@@ -448,7 +497,7 @@ impl SessionAdapter for CustomAdapter {
                     .and_then(|raw| serde_json::from_str(&raw).ok())
                 {
                     Some(v) => v,
-                    None => continue, // malformed file — skip
+                    None => continue, // malformed file: skip
                 };
                 let nested = parsed.get("sessions").and_then(Value::as_array).cloned();
                 let inputs: Vec<Value> = match nested {
@@ -468,7 +517,7 @@ impl SessionAdapter for CustomAdapter {
             }
         }
         let total = sessions.len();
-        // Newest first before capping — read_dir order is arbitrary.
+        // Newest first before capping: read_dir order is arbitrary.
         sessions.sort_by_cached_key(|s| {
             std::cmp::Reverse(parse_date(&s.timestamp).map(|d| d.timestamp_millis()))
         });
@@ -480,6 +529,15 @@ impl SessionAdapter for CustomAdapter {
             None
         };
         CollectResult { sessions, status }
+    }
+
+    fn project_sessions(
+        &self,
+        config: &AdapterConfig,
+        root: &str,
+        limit: usize,
+    ) -> Option<Vec<AgentSession>> {
+        Some(super::collect_for_project(self, config, root, limit))
     }
 }
 

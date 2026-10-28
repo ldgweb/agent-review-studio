@@ -17,7 +17,7 @@ export function formatDateTime(iso: string): string {
   return `${formatDate(iso)}, ${formatTimeShort(iso)}`;
 }
 
-/** Compact age for inbox rows: "now", "5m", "3h", "2d", then a short date */
+/** Compact age for lists: "now", "5m", "3h", "2d", then a short date */
 export function formatRelative(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   const min = Math.floor(ms / 60_000);
@@ -30,11 +30,17 @@ export function formatRelative(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
-export function formatDuration(minutes: number): string {
-  if (minutes < 60) return `${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m === 0 ? `${h} h` : `${h} h ${m} min`;
+/** The same age in a sentence: "just now", "5m ago", "on 28 Oct" */
+export function formatAgo(iso: string): string {
+  const r = formatRelative(iso);
+  return r === 'now' ? 'just now' : /^\d+[mhd]$/.test(r) ? `${r} ago` : `on ${r}`;
+}
+
+/** A project file's full path, written the way the system writes it
+ * (backslashes on Windows) */
+export function fullPath(root: string, relative: string): string {
+  const full = `${root.replace(/[\\/]+$/, '')}/${relative}`;
+  return /^([A-Za-z]:|\/\/|\\\\)/.test(root) ? full.replace(/\//g, '\\') : full;
 }
 
 export function fileName(path: string): string {

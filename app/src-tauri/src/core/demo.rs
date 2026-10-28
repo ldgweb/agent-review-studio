@@ -1,17 +1,19 @@
-// The sample tour — everything ARS can do, demonstrated on REAL machinery.
+// The sample tour: everything ARS can do, shown on the REAL machinery.
 //
 // One click installs:
 //   - a sandbox git repo (~/.agent-review-studio/demo/demo-shop) with a base
-//     commit and uncommitted working-tree changes → the Git surface is fully
-//     alive: working-tree diffs, commit of approved paths, revert, the graph;
-//   - TWO ars/v1 sessions flowing through the real pipeline (normalize, risk
-//     triage, local findings), so the "never re-tested" signal shows too:
-//       ars-demo-tour  — fresh, waiting for the user's verdicts;
-//       ars-demo-fix   — ALREADY reviewed: per-file verdicts, line comments,
-//                        a corrections draft, outcome recorded (Apply stage).
+//     commit and uncommitted working-tree changes, so its review is a real
+//     project review: working-tree hunks and their attribution;
+//   - TWO ars/v1 sessions that go through the real pipeline, so every hunk
+//     carries the sample agent's words:
+//       ars-demo-tour: the discount feature, waiting for verdicts;
+//       ars-demo-fix: the retry work, ALREADY reviewed once. Round 1
+//         approved client.ts and asked for changes to retry.ts (uncapped
+//         backoff) and the docs. The agent has since capped the backoff,
+//         so "since last review" shows just that.
 //
-// Nothing is mocked in the UI: archiving the samples is the ordinary archive
-// action, re-installing un-archives and resets the sandbox working tree.
+// Nothing is mocked in the UI: re-installing resets the sandbox working tree
+// and the sample review.
 
 use super::{scanner, storage};
 use serde_json::{json, Value};
@@ -39,9 +41,9 @@ fn run_git(root: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// (path, base content committed to HEAD, modified content left uncommitted)
-/// — the uncommitted state matches the sessions' transcript diffs, so the
-/// working-tree enrichment shows the same story the transcripts tell.
+/// (path, base content committed to HEAD, modified content left uncommitted).
+/// The uncommitted state matches the sessions' recorded edits, so every
+/// change in the review is explained by them.
 const FILES: [(&str, Option<&str>, &str); 8] = [
     (
         "src/auth/session.ts",
@@ -76,7 +78,7 @@ const FILES: [(&str, Option<&str>, &str); 8] = [
     (
         "src/api/retry.ts",
         None,
-        "export interface RetryOptions {\n  attempts: number;\n  baseDelayMs: number;\n}\n\nexport async function withRetry(run: () => Promise<Response>, opts: RetryOptions): Promise<Response> {\n  for (let i = 0; i < opts.attempts; i++) {\n    const res = await run().catch(() => null);\n    if (res && res.ok) return res;\n    await sleep(opts.baseDelayMs * 2 ** i);\n  }\n  throw new Error('request failed after retries');\n}\n",
+        "export interface RetryOptions {\n  attempts: number;\n  baseDelayMs: number;\n}\n\n/** The docs promise at most 30 s between attempts. */\nconst MAX_DELAY_MS = 30_000;\n\nexport async function withRetry(run: () => Promise<Response>, opts: RetryOptions): Promise<Response> {\n  for (let i = 0; i < opts.attempts; i++) {\n    const res = await run().catch(() => null);\n    if (res && res.ok) return res;\n    const backoff = Math.min(MAX_DELAY_MS, opts.baseDelayMs * 2 ** i);\n    // Full jitter: clients that failed together do not retry in lockstep.\n    await sleep(Math.random() * backoff);\n  }\n  throw new Error('request failed after retries');\n}\n",
     ),
     (
         "docs/api.md",
@@ -84,6 +86,10 @@ const FILES: [(&str, Option<&str>, &str); 8] = [
         "# API client\n\n## Requests\n\nUse request(path, init) everywhere.\n\n## Errors\n\nThe client throws after the last attempt.\nRequests are retried up to 5 times with exponential backoff.\nBackoff never exceeds 30 seconds between attempts.\n",
     ),
 ];
+
+/// retry.ts as the reviewer saw it in round 1, before the agent capped the
+/// backoff: the base of "since last review".
+const RETRY_AS_REVIEWED: &str = "export interface RetryOptions {\n  attempts: number;\n  baseDelayMs: number;\n}\n\nexport async function withRetry(run: () => Promise<Response>, opts: RetryOptions): Promise<Response> {\n  for (let i = 0; i < opts.attempts; i++) {\n    const res = await run().catch(() => null);\n    if (res && res.ok) return res;\n    await sleep(opts.baseDelayMs * 2 ** i);\n  }\n  throw new Error('request failed after retries');\n}\n";
 
 fn write_file(root: &Path, rel: &str, content: &str) -> Result<(), String> {
     let path = root.join(rel);
@@ -114,36 +120,150 @@ fn ensure_sandbox() -> Result<String, String> {
     }
 
     // Always reset the working tree to the "agent just worked here" state so
-    // re-running the tour is deterministic even after commits/reverts.
+    // re-running the tour is deterministic even after commits.
     for (rel, _, modified) in FILES.iter() {
         write_file(&root, rel, modified)?;
     }
     Ok(root_str)
 }
 
-/// The reviewed sample's approval state — what a finished review looks like:
-/// verdicts in all three colors, two line comments, a corrections note, and
-/// the recorded outcome (so the workbench opens in the Apply stage).
-fn seed_reviewed_approval() -> Result<(), String> {
-    let session = scanner::session_by_id(REVIEWED_ID).ok_or("Sample session not indexed")?;
-    let raw = serde_json::to_value(&*session).map_err(|e| e.to_string())?;
-    let state = json!({
-        "sessionId": REVIEWED_ID,
-        "reviewRevision": super::git::review_revision(&raw)?,
-        "contentHash": super::normalize::session_hash(&session),
-        "fileStates": { "lf-1": "approved", "lf-2": "correction-requested", "lf-3": "rejected" },
-        "correctionNotes": {
-            "lf-2": "Cap the backoff — the docs promise ≤30s between attempts — and add jitter so clients don't retry in lockstep."
+/// The demo project's review after round 1 (see the header).
+fn seed_review(root: &str) -> Result<(), String> {
+    use super::review::changes::{self, LineKind};
+    use super::review::state::{self, Comment, HunkVerdict, ReviewState, Round, Verdict};
+    let cs = changes::collect(root)?;
+    let hunks_of = |path: &str| -> Vec<&changes::Hunk> {
+        cs.files
+            .iter()
+            .find(|f| f.path == path)
+            .map(|f| f.hunks.iter().collect())
+            .unwrap_or_default()
+    };
+    let at = "2026-07-19T16:00:00.000Z".to_string();
+    let mut s = ReviewState {
+        version: state::STATE_VERSION,
+        ..ReviewState::default()
+    };
+    for (path, verdict) in [
+        ("src/api/client.ts", Verdict::Approved),
+        ("docs/api.md", Verdict::Changes),
+    ] {
+        for h in hunks_of(path) {
+            s.hunks.insert(
+                h.id.clone(),
+                HunkVerdict {
+                    verdict,
+                    path: path.into(),
+                    at: at.clone(),
+                },
+            );
+        }
+    }
+
+    // Round 1's snapshot: retry.ts before the fix, the rest as it is now.
+    let content = |path: &str| {
+        FILES
+            .iter()
+            .find(|f| f.0 == path)
+            .map(|f| f.2)
+            .unwrap_or("")
+    };
+    let mut files = std::collections::BTreeMap::new();
+    for (path, text) in [
+        ("src/api/client.ts", content("src/api/client.ts")),
+        ("docs/api.md", content("docs/api.md")),
+        ("src/api/retry.ts", RETRY_AS_REVIEWED),
+    ] {
+        let hash = state::blob_hash(text.as_bytes());
+        storage::put_blob(&hash, text.as_bytes())?;
+        files.insert(path.to_string(), Some(hash));
+    }
+    let retry_hunk = changes::hunk_id(
+        "src/api/retry.ts",
+        RETRY_AS_REVIEWED.lines().map(|l| (LineKind::Add, l)),
+    );
+    let sleep_line = RETRY_AS_REVIEWED
+        .lines()
+        .position(|l| l.contains("await sleep"))
+        .unwrap_or(0);
+    let docs = hunks_of("docs/api.md");
+    let docs_hunk = docs.first().ok_or("The sample docs change is missing.")?;
+    let (docs_li, docs_line) = docs_hunk
+        .lines
+        .iter()
+        .enumerate()
+        .find(|(_, l)| l.text.starts_with("Backoff never exceeds"))
+        .ok_or("The sample docs line is missing.")?;
+    let comments = vec![
+        Comment {
+            id: "c-demo-1".into(),
+            path: "src/api/retry.ts".into(),
+            hunk_id: retry_hunk,
+            li: sleep_line,
+            kind: "add".into(),
+            line_text: RETRY_AS_REVIEWED
+                .lines()
+                .nth(sleep_line)
+                .unwrap_or("")
+                .into(),
+            line: Some(sleep_line as i64 + 1),
+            text: "200ms · 2^i has no cap: it passes 30 s around attempt 8. Cap it.".into(),
+            suggestion: None,
+            at: at.clone(),
+            resolved: false,
         },
-        "lineComments": {
-            "lf-2": [{ "anchor": "0:9", "line": 10, "text": "200ms · 2^i grows unbounded — this passes 30s around attempt 8. Cap it." }],
-            "lf-3": [{ "anchor": "0:5", "line": 34, "text": "This promises a cap the code doesn't implement yet — fix retry.ts first." }]
+        Comment {
+            id: "c-demo-2".into(),
+            path: "docs/api.md".into(),
+            hunk_id: docs_hunk.id.clone(),
+            li: docs_li,
+            kind: "add".into(),
+            line_text: docs_line.text.clone(),
+            line: docs_line.new_line,
+            text: "This promises a cap the code doesn't implement yet. Fix retry.ts first.".into(),
+            suggestion: None,
+            at: at.clone(),
+            resolved: false,
         },
-        "findingStates": {},
-        "rejectedCategories": [],
-        "sessionDecision": "corrections-requested"
+    ];
+    let mut notes = std::collections::BTreeMap::new();
+    notes.insert(
+        "src/api/retry.ts".to_string(),
+        "Cap the backoff: the docs promise at most 30 s between attempts. Add jitter too, so clients don't retry in lockstep.".to_string(),
+    );
+    // What round 1 sent the agent, in the review's own shape
+    let project = super::review::ProjectInfo {
+        root: root.to_string(),
+        name: "demo-shop".into(),
+        branch: cs.branch.clone(),
+        head: cs.head.clone(),
+    };
+    let text = format!(
+        "{}\n\n## src/api/retry.ts\n1. CHANGE this file: {}\n2. CHANGE line {} `{}`: {}\n\n## docs/api.md\n3. CHANGE line {} `{}`: {}\n",
+        super::review::package::intro(&project, false),
+        notes["src/api/retry.ts"],
+        comments[0].line.unwrap_or(0),
+        comments[0].line_text.trim(),
+        comments[0].text,
+        comments[1].line.unwrap_or(0),
+        comments[1].line_text.trim(),
+        comments[1].text,
+    );
+    s.rounds.push(Round {
+        index: 1,
+        at,
+        head: cs.head.clone(),
+        text,
+        items: Some(3),
+        files,
+        comments,
+        notes,
     });
-    storage::save_approval(REVIEWED_ID, &state)
+    let _guard = state::lock();
+    let (_, rev) = state::load(root)?;
+    state::write(root, &s, rev)
+        .map(|_| ())
+        .map_err(|e| e.unwrap_or_else(|| "The sample review changed while installing.".into()))
 }
 
 fn install_session_file(dir: &str, id: &str, raw: &str, project_path: &str) -> Result<(), String> {
@@ -159,8 +279,8 @@ fn install_session_file(dir: &str, id: &str, raw: &str, project_path: &str) -> R
     .map_err(|e| e.to_string())
 }
 
-/// Install (or reset) the whole tour. Returns the fresh session's id so the
-/// UI can jump straight into the review.
+/// Install (or reset) the whole tour. Returns the sandbox project so the UI
+/// can open its review.
 pub fn install() -> Value {
     let config = super::config::load_config();
     let sessions_dir = config
@@ -189,7 +309,7 @@ pub fn install() -> Value {
         return json!({ "error": format!("Could not write the sample sessions: {e}") });
     }
 
-    // The samples arrive through the custom (ars/v1) source — switch it on
+    // The samples arrive through the custom (ars/v1) source: switch it on
     // if the user had it disabled, or the click would do nothing.
     if !config
         .adapters
@@ -208,17 +328,17 @@ pub fn install() -> Value {
         return json!({ "error": e });
     }
     scanner::rescan();
-    if let Err(e) = seed_reviewed_approval() {
-        return json!({"error": e});
+    if let Err(e) = seed_review(&root) {
+        return json!({ "error": format!("Could not prepare the sample review: {e}") });
     }
-    json!({ "ok": true, "sessionId": FRESH_ID, "reviewedSessionId": REVIEWED_ID })
+    json!({ "ok": true, "project": root })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Machine-dependent smoke — run explicitly with `cargo test -- --ignored`.
+    /// Machine-dependent smoke test: run explicitly with `cargo test -- --ignored`.
     /// Installs the real tour into ~/.agent-review-studio (same effect as the
     /// Welcome button) and asserts every seeded piece landed.
     #[test]
@@ -239,11 +359,13 @@ mod tests {
             "modified files missing"
         );
 
-        let approvals = storage::get_approvals().expect("approvals readable");
-        let seeded = approvals.get(REVIEWED_ID).expect("seeded approval missing");
-        assert_eq!(
-            seeded.get("sessionDecision").and_then(Value::as_str),
-            Some("corrections-requested")
-        );
+        let review = super::super::review::build(out["project"].as_str().unwrap()).expect("review");
+        assert_eq!(review.since_review.as_ref().map(|s| s.round), Some(1));
+        let retry = review
+            .files
+            .iter()
+            .find(|f| f.path == "src/api/retry.ts")
+            .unwrap();
+        assert_eq!(retry.since, Some("changed"));
     }
 }

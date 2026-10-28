@@ -34,7 +34,7 @@ Agents change how they store sessions without warning, and when that happens an 
 
 **Fixing it**
 
-1. Find the adapter in `app/src-tauri/src/core/adapters/` (one file per agent). Keep the old format working: users upgrade agents at different times, so add the new shape next to the old one instead of replacing it.
+1. Find the adapter in `app/src-tauri/src/core/adapters/` (one file per agent). Keep the old format working: users upgrade agents at different times, so add the new shape next to the old one instead of replacing it. Besides prompts, commands and files, an adapter should fill the session's `turns` and `edits`. `turns` holds each human prompt. `edits` holds each recorded file edit: its changed lines, its turn and the agent's text before it. The project review matches working-tree changes against `edits` to show why each change was made. Claude Code, Codex and `ars/v1` do this; see `claude_code.rs` for the reference.
 2. Write a **synthetic** transcript in the new format under `fixtures/<agent>/`, named after what it covers (for example `cursor/agent-v3.json`). Invent the content; keep it small but include every record type the change touched.
 3. Add a test next to the existing fixture tests in the adapter (they call `fixture::assert_session`) and generate its expected output from `app/src-tauri`:
 

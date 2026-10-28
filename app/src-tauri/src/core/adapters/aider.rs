@@ -1,4 +1,4 @@
-// Aider adapter — parses .aider.chat.history.md files.
+// Aider adapter: parses .aider.chat.history.md files.
 // Aider keeps its history inside each project folder (not in a central
 // directory), so this adapter requires configuration: list your project
 // folders in ~/.agent-review-studio/config.json → adapters.aider.projectDirs.
@@ -277,8 +277,8 @@ impl SessionAdapter for AiderAdapter {
         "Aider"
     }
 
-    /// The history file sits at each project root — no reason to watch the
-    /// whole project tree recursively.
+    /// The history file sits at each project root, so there is no reason
+    /// to watch the whole project tree recursively.
     fn watch_targets(&self, config: &AdapterConfig) -> Vec<super::WatchTarget> {
         config
             .project_dirs
@@ -341,7 +341,7 @@ impl SessionAdapter for AiderAdapter {
         }
         cache.retain(|key, _| seen.contains(key));
         let total = sessions.len();
-        // Across projects, keep the newest sessions — not whichever folder
+        // Across projects, keep the newest sessions, not whichever folder
         // happens to be listed last.
         sessions.sort_by_cached_key(|s| {
             std::cmp::Reverse(parse_date(&s.timestamp).map(|d| d.timestamp_millis()))

@@ -1,14 +1,14 @@
 [package]
 name = "agent-review-studio"
-version = "0.9.0"
-description = "Windows workbench for human review of coding-agent sessions"
+version = "0.10.0"
+description = "Human review of what coding agents change in a project, before commit"
 authors = ["Lucio (ldgweb)"]
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/ldgweb/agent-review-studio"
 publish = false
 # Two binaries live in this crate (the desktop shell + the ars CLI), so a bare
-# `cargo run` needs to know which one is the default — the desktop app.
+# `cargo run` needs to know which one is the default: the desktop app.
 default-run = "agent-review-studio"
 
 # The native core is a library shared by two binaries: the Tauri desktop shell
@@ -31,6 +31,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-window-state = "2"
+# `ars <dir>` while the app is open: the running window opens the project.
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 # preserve_order: keeps JSON key order stable, as the fixture contract expects
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -43,6 +45,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dirs = "5"
 notify = "6"
+# "Since last review": line diffs between a round's snapshot and the working tree.
+similar = "2"
 # Async runtime: the desktop bin gets it from Tauri, the ars CLI needs it directly.
 tokio = { version = "1", features = ["rt", "macros"] }
 

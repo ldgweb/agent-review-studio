@@ -1,29 +1,93 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import type { DiffHunk, DiffLine, FileChange, LineComment } from '../types/domain';
-import { extToLang, highlightLine } from '../lib/highlight';
-import { changedRanges, type IntraRange } from '../lib/intraline';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import type { DiffLine, LineComment } from '../types/domain';
+import { extToLang, highlightFile, highlightLine, renderHast, type HastNode } from '../lib/highlight';
+import { alignRun, changedRanges, type IntraRange } from '../lib/intraline';
+import { hunkSection } from '../lib/review';
 import { scrollFlash } from '../lib/scroll';
+import { useDismiss } from '../state/useDismiss';
+import { usePref } from '../state/usePref';
+import { IconComment, IconPencil } from './icons';
 
-// The code-reading surface, modeled on today's best diff viewers (GitHub /
-// VS Code): unified or side-by-side (with a draggable divider), long lines
-// wrap by default (no-wrap scrolls horizontally with sticky gutters instead
-// of clipping), word-level changed segments are highlighted inside del/add
-// pairs, hover any line to leave a comment, findings render inline at their
-// line. Git-enriched files can expand the unchanged context around hunks,
-// GitHub-style, straight from the working tree. Hunks are windowed with
-// content-visibility so huge diffs stay smooth, and oversized hunks render
-// behind a "show more" expander.
+// The code-reading surface, modeled on today's best diff viewers (GitHub,
+// VS Code, JetBrains): unified or side-by-side (with a draggable divider),
+// long lines wrap by default (no-wrap scrolls horizontally with sticky
+// gutters instead of clipping). Syntax colors come from the whole file, as
+// in an editor; removed and added lines are paired by similarity and every
+// changed word is marked; moved code links to where it came from. Hover any
+// line to comment, or to suggest the code you want instead. Findings render
+// inline at their line; the unchanged context around hunks expands from the
+// working tree. Hunks are windowed with content-visibility so huge diffs
+// stay smooth, and oversized hunks render behind a "show more" expander.
 
 const MAX_RENDER_LINES = 400;
 /** Context lines revealed per expander click (GitHub-style) */
 const EXPAND_STEP = 20;
-/** Default diff font size (px) — the user can adjust it from the diff bar */
+/** Code font size (px): the default, and the range the view menu allows */
 export const DEFAULT_DIFF_FONT = 13;
+export const MIN_DIFF_FONT = 10;
+export const MAX_DIFF_FONT = 22;
+/** Line height as a multiple of the font size (matches the CSS) */
+export const LINE_HEIGHT = 1.6;
+/** Side-by-side divider: where it starts, and how far it can go (% of width) */
+const SPLIT_DEFAULT = 50;
+const SPLIT_MIN = 25;
+const SPLIT_MAX = 75;
 
 export type DiffViewMode = 'unified' | 'split';
 
+type ViewLine = DiffLine & { moved?: boolean; movedPeer?: { path: string; line: number } };
+/** A hunk; with a content id, what is open in it survives the file changing */
+type ViewHunk = { id?: string; header: string; lines: ViewLine[] };
+/** Whole-file tokens for a line, when its file was highlighted */
+type TokensOf = (line: DiffLine) => HastNode[] | undefined;
+/** The open comment editor: its line, and whether it opened on the code */
+interface Editing {
+  anchor: string;
+  suggest: boolean;
+}
+type OnEdit = (anchor: string | null, suggest?: boolean) => void;
+/** What is typed in the open editor, kept by the diff so it survives the
+ * editor moving when the agent rewrites the file */
+type Draft = { anchor: string; text: string; suggestion?: string };
+type DraftRef = MutableRefObject<Draft | null>;
+
+/** A hunk's key for what is open in it: its content id, else its place */
+const hunkKey = (h: ViewHunk, hi: number) => h.id ?? `#${hi}`;
+
+/** Hover actions in the gutter, side by side: suggest the code you want
+ * instead (not on a removed line), and comment */
+function LineActions({ anchor, kind, onEdit }: { anchor: string; kind: DiffLine['kind']; onEdit: OnEdit }) {
+  return (
+    <span className="line-tools">
+      {kind !== 'del' && (
+        <button
+          className="line-tool suggest"
+          title="Suggest code: write this line the way you want it"
+          aria-label="Suggest code for this line"
+          onClick={() => onEdit(anchor, true)}
+        >
+          <IconPencil size={12} />
+        </button>
+      )}
+      <button className="line-tool comment" title="Comment on this line" aria-label="Comment on this line" onClick={() => onEdit(anchor)}>
+        <IconComment size={12} />
+      </button>
+    </span>
+  );
+}
+
+/** What the viewer needs of a file: identity, kind and hunks. */
+export interface DiffFile {
+  id: string;
+  path: string;
+  language: string;
+  changeType: string;
+  linesAdded: number;
+  hunks: ViewHunk[];
+}
+
 interface DiffViewProps {
-  file: FileChange;
+  file: DiffFile;
   comments?: LineComment[];
   onSaveComment?: (comment: LineComment) => void;
   onDeleteComment?: (anchor: string) => void;
@@ -39,95 +103,232 @@ interface DiffViewProps {
   viewMode?: DiffViewMode;
   /** Wrap long lines (default); off = horizontal scroll, never clipped */
   wrap?: boolean;
-  /** Loads the file's working-tree lines — enables expanding hunk context */
+  /** Loads the file's lines as they are now: the context around hunks expands */
   onLoadFileLines?: () => Promise<string[] | null>;
+  /** Loads HEAD's lines of the file: removed lines get whole-file colors */
+  onLoadBaseLines?: () => Promise<string[] | null>;
+  /** focusLine is a HEAD line (a removed line), not a new one */
+  focusOld?: boolean;
+  /** A moved block's link was clicked: the other half's file and line
+   * (old: a removed line, numbered as in HEAD) */
+  onMovedPeer?: (path: string, line: number, old: boolean) => void;
   /** A diff line was clicked (its new-file line number) */
   onLineClick?: (line: number) => void;
+  /** Replaces the plain "@@" header of hunk `hi` (origin, verdicts, noise) */
+  renderHunkHeader?: (hi: number) => ReactNode;
+  /** Hunks shown as their header only (noise folded away) */
+  collapsedHunks?: ReadonlySet<number>;
+  /** The hunk the keyboard is on */
+  focusedHunk?: number;
+  /** Open the comment editor on a hunk's first changed line. A new nonce
+   * is a new request; the one the view mounts with is not replayed. */
+  commentRequest?: { hi: number; nonce: number };
 }
 
+/** Writing to the agent about one line: words, or the code you want there
+ * instead (GitHub's suggested change), edited in place in the diff's own
+ * font, right under the line. The agent gets that code verbatim. */
 function CommentEditor({
   initial,
+  initialSuggestion,
+  draft,
+  request,
+  lineText,
+  lineNo,
+  canSuggest,
+  lang,
   onSave,
   onCancel,
 }: {
   initial: string;
-  onSave: (text: string) => void;
+  initialSuggestion?: string;
+  draft: DraftRef;
+  /** The latest click that opened it: on the code (Suggest) or on the words
+   * (Comment). Each click is a new object, so a second click on the same
+   * line switches the editor rather than being ignored. */
+  request: Editing;
+  lineText: string;
+  lineNo?: number;
+  canSuggest: boolean;
+  lang: string | null;
+  onSave: (text: string, suggestion?: string) => void;
   onCancel: () => void;
 }) {
-  const [text, setText] = useState(initial);
+  // What was typed before the editor moved, else what is saved
+  const kept = draft.current?.anchor === request.anchor ? draft.current : null;
+  const [text, setText] = useState(kept ? kept.text : initial);
+  const [suggestion, setSuggestion] = useState<string | undefined>(
+    kept ? kept.suggestion : (initialSuggestion ?? (request.suggest && canSuggest ? lineText : undefined)),
+  );
+  useEffect(() => {
+    draft.current = { anchor: request.anchor, text, suggestion };
+  }, [draft, request.anchor, text, suggestion]);
+  useDismiss(true, onCancel);
+  const suggests = suggestion !== undefined && suggestion !== lineText;
+  const ready = Boolean(text.trim()) || suggests;
+  const save = () => {
+    if (ready) onSave(text.trim(), suggests ? suggestion : undefined);
+  };
+  const keys = (e: ReactKeyboardEvent) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save();
+  };
+  const codeRef = useRef<HTMLTextAreaElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  // Every click lands somewhere useful: Suggest opens the code (keeping what
+  // is written), Comment goes to the words (dropping an untouched
+  // suggestion). The caret moves there too, so Esc and Ctrl+Enter work.
+  useEffect(() => {
+    const onCode = request.suggest && canSuggest;
+    if (onCode) setSuggestion((s) => s ?? lineText);
+    else setSuggestion((s) => (s === lineText ? undefined : s));
+    const frame = requestAnimationFrame(() => {
+      const el = onCode ? codeRef.current : textRef.current;
+      el?.focus();
+      if (el) el.setSelectionRange(el.value.length, el.value.length);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [request]);
   return (
-    <div className="comment-editor">
+    <div className="note editing">
+      {suggestion !== undefined && (
+        <div className="sugg">
+          <div className="sugg-label">
+            Suggested change{lineNo ? ` for line ${lineNo}` : ''} <span className="faint">· leave it empty to remove the line</span>
+          </div>
+          <div className="sugg-line del">
+            <span className="sugg-sign">−</span>
+            <span className="sugg-code">{highlightLine(lineText, lang)}</span>
+          </div>
+          <div className="sugg-line add editing">
+            <span className="sugg-sign">+</span>
+            <textarea
+              ref={codeRef}
+              className="sugg-input"
+              spellCheck={false}
+              rows={Math.max(1, suggestion.split('\n').length)}
+              value={suggestion}
+              onChange={(e) => setSuggestion(e.target.value)}
+              onKeyDown={keys}
+              aria-label="The code to put instead of this line"
+            />
+          </div>
+        </div>
+      )}
       <textarea
-        className="textarea"
-        autoFocus
+        ref={textRef}
+        className="note-input"
         rows={2}
-        placeholder="Leave a comment for the agent — e.g. “add rate limiting here” or “why not reuse UserService?”"
+        placeholder={
+          suggestion !== undefined ? 'Why (optional)' : 'What should the agent change here? End with “?” to ask a question.'
+        }
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && text.trim()) onSave(text.trim());
-          if (e.key === 'Escape') onCancel();
-        }}
+        onKeyDown={keys}
       />
-      <div className="flex" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
+      <div className="note-bar">
+        {canSuggest && (
+          <button
+            className="btn-mini"
+            title="Write the code you want instead: the agent gets it verbatim"
+            onClick={() => setSuggestion((s) => (s === undefined ? lineText : undefined))}
+          >
+            <IconPencil size={11} /> {suggestion === undefined ? 'Suggest code' : 'Remove the suggestion'}
+          </button>
+        )}
+        <span style={{ flex: 1 }} />
         <button className="btn btn-sm" onClick={onCancel}>Cancel</button>
-        <button className="btn btn-sm btn-primary" disabled={!text.trim()} onClick={() => onSave(text.trim())}>
-          Comment
+        <button className="btn btn-sm btn-primary" disabled={!ready} onClick={save} title="Ctrl+Enter">
+          Save
         </button>
       </div>
     </div>
   );
 }
 
-/**
- * Comments anchor positionally ("hunkIndex:lineIndex"). When the hunks change
- * shape after the comment was left (e.g. diffs re-enriched), re-resolve the
- * anchor through the comment's recorded line number.
- */
-function resolveAnchor(file: FileChange, comment: LineComment): string {
-  const [hi, li] = comment.anchor.split(':').map(Number);
-  const at = file.hunks[hi]?.lines[li];
-  if (!comment.line || (at && (at.newLine ?? at.oldLine) === comment.line)) return comment.anchor;
-  for (let h = 0; h < file.hunks.length; h++) {
-    const idx = file.hunks[h].lines.findIndex((l) => l.newLine === comment.line);
-    if (idx !== -1) return `${h}:${idx}`;
-  }
-  return comment.anchor;
+/** A suggested change as the agent will get it: the line, then what replaces it */
+function SuggestionView({ lineText, suggestion, lang }: { lineText: string; suggestion: string; lang: string | null }) {
+  return (
+    <div className="sugg">
+      <div className="sugg-label">Suggested change</div>
+      <div className="sugg-line del">
+        <span className="sugg-sign">−</span>
+        <span className="sugg-code">{highlightLine(lineText, lang)}</span>
+      </div>
+      {suggestion === '' ? (
+        <div className="sugg-line removed">
+          <span className="sugg-sign" />
+          <span className="sugg-code faint">the line is removed</span>
+        </div>
+      ) : (
+        suggestion.split('\n').map((l, i) => (
+          <div key={i} className="sugg-line add">
+            <span className="sugg-sign">+</span>
+            <span className="sugg-code">{highlightLine(l, lang)}</span>
+          </div>
+        ))
+      )}
+    </div>
+  );
 }
 
 const EMPTY_COMMENTS: ReadonlyMap<string, LineComment> = new Map();
-const EMPTY_RANGES: ReadonlyMap<number, IntraRange> = new Map();
+const EMPTY_RANGES: ReadonlyMap<number, IntraRange[]> = new Map();
 
-/** The line text with the changed word-level segment marked behind it: a
- * transparent copy sits under the tokenized code so the highlight never
- * fights the syntax colors. */
-function CodeText({
-  text,
-  lang,
-  range,
-  kind,
-}: {
-  text: string;
+/** What every line needs to render, shared by the whole file */
+interface LineRender {
   lang: string | null;
-  range?: IntraRange;
-  kind: DiffLine['kind'];
-}) {
+  tokensOf: TokensOf;
+  filePath: string;
+  onMovedPeer?: (path: string, line: number, old: boolean) => void;
+}
+
+/** The line text with its changed word-level segments marked behind it: a
+ * transparent copy sits under the tokenized code so the marks never fight
+ * the syntax colors. */
+function CodeText({ line, ranges, rc }: { line: ViewLine; ranges?: IntraRange[]; rc: LineRender }) {
+  const { text, kind } = line;
+  const tokens = rc.tokensOf(line);
+  const peer = line.movedPeer;
+  const underlay: ReactNode[] = [];
+  if (ranges?.length) {
+    let pos = 0;
+    ranges.forEach((r, i) => {
+      if (r.start > pos) underlay.push(text.slice(pos, r.start));
+      underlay.push(
+        <span key={i} className={`seg-${kind}`}>
+          {text.slice(r.start, r.end)}
+        </span>,
+      );
+      pos = r.end;
+    });
+    if (pos < text.length) underlay.push(text.slice(pos));
+  }
   return (
     <>
-      {range && (
+      {underlay.length > 0 && (
         <span className="seg-underlay" aria-hidden="true">
-          {text.slice(0, range.start)}
-          <span className={`seg-${kind}`}>{text.slice(range.start, range.end)}</span>
-          {text.slice(range.end)}
+          {underlay}
         </span>
       )}
-      {highlightLine(text, lang)}
+      {tokens ? renderHast(tokens) : highlightLine(text, rc.lang)}
+      {peer && rc.onMovedPeer && (
+        <button
+          className="moved-peer"
+          title={kind === 'add' ? 'This block was removed there: open it' : 'This block was added there: open it'}
+          onClick={(e) => {
+            e.stopPropagation();
+            rc.onMovedPeer?.(peer.path, peer.line, kind === 'add');
+          }}
+        >
+          {kind === 'add' ? 'moved from' : 'moved to'} {peer.path === rc.filePath ? `line ${peer.line}` : `${peer.path}:${peer.line}`}
+        </button>
+      )}
     </>
   );
 }
 
 interface SplitSide {
-  line: DiffLine;
+  line: ViewLine;
   li: number;
 }
 
@@ -136,9 +337,11 @@ interface SplitRow {
   right?: SplitSide;
 }
 
-/** Pair lines for the side-by-side view: context spans both sides, each
- * del-run is aligned with the add-run that follows it (GitHub-style). */
-function buildSplitRows(lines: DiffLine[]): SplitRow[] {
+/** Rows for the side-by-side view: context spans both sides; each run of
+ * removed lines meets the added run after it line by line, paired by
+ * similarity (an edited line sits next to its new version even when lines
+ * were inserted above it). */
+function buildSplitRows(lines: ViewLine[]): SplitRow[] {
   const rows: SplitRow[] = [];
   let i = 0;
   while (i < lines.length) {
@@ -151,12 +354,12 @@ function buildSplitRows(lines: DiffLine[]): SplitRow[] {
     while (i < lines.length && lines[i].kind === 'del') i++;
     const addStart = i;
     while (i < lines.length && lines[i].kind === 'add') i++;
-    const dels = addStart - delStart;
-    const adds = i - addStart;
-    for (let k = 0; k < Math.max(dels, adds); k++) {
+    const dels = lines.slice(delStart, addStart).map((l) => l.text);
+    const adds = lines.slice(addStart, i).map((l) => l.text);
+    for (const row of alignRun(dels, adds)) {
       rows.push({
-        left: k < dels ? { line: lines[delStart + k], li: delStart + k } : undefined,
-        right: k < adds ? { line: lines[addStart + k], li: addStart + k } : undefined,
+        left: row.del !== null ? { line: lines[delStart + row.del], li: delStart + row.del } : undefined,
+        right: row.add !== null ? { line: lines[addStart + row.add], li: addStart + row.add } : undefined,
       });
     }
   }
@@ -167,7 +370,7 @@ function SplitCell({
   side,
   num,
   id,
-  lang,
+  rc,
   ranges,
   canComment,
   commented,
@@ -177,28 +380,24 @@ function SplitCell({
   side?: SplitSide;
   num?: number;
   id?: string;
-  lang: string | null;
-  ranges: ReadonlyMap<number, IntraRange>;
+  rc: LineRender;
+  ranges: ReadonlyMap<number, IntraRange[]>;
   canComment: boolean;
   commented: boolean;
-  onEdit: (anchor: string) => void;
+  onEdit: OnEdit;
   hi: number;
 }) {
   if (!side) return <div className="split-side none" />;
   const { line, li } = side;
   return (
-    <div id={id} className={`split-side ${line.kind}${commented ? ' commented' : ''}`} data-line={line.newLine}>
+    <div id={id} className={`split-side ${line.kind}${line.moved ? ' moved' : ''}${commented ? ' commented' : ''}`} data-line={line.newLine}>
       <span className="ln">{num ?? ''}</span>
       <span className="sign">
-        {canComment && (
-          <button className="add-comment" title="Comment on this line" onClick={() => onEdit(`${hi}:${li}`)}>
-            +
-          </button>
-        )}
+        {canComment && <LineActions anchor={`${hi}:${li}`} kind={line.kind} onEdit={onEdit} />}
         <span className="sign-char">{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ''}</span>
       </span>
       <span className="code">
-        <CodeText text={line.text} lang={lang} range={ranges.get(li)} kind={line.kind} />
+        <CodeText line={line} ranges={ranges.get(li)} rc={rc} />
       </span>
     </div>
   );
@@ -207,7 +406,7 @@ function SplitCell({
 /** Expanded lines pulled from the working tree, in either view mode.
  * Usually unchanged context; for a created file they are additions (the
  * whole file is new) and render green with an empty old side. */
-function ContextLines({ lines, split, lang }: { lines: DiffLine[]; split: boolean; lang: string | null }) {
+function ContextLines({ lines, split, rc }: { lines: DiffLine[]; split: boolean; rc: LineRender }) {
   if (lines.length === 0) return null;
   if (split) {
     return (
@@ -221,7 +420,7 @@ function ContextLines({ lines, split, lang }: { lines: DiffLine[]; split: boolea
                 <span className="ln">{l.oldLine ?? ''}</span>
                 <span className="sign" />
                 <span className="code">
-                  <CodeText text={l.text} lang={lang} kind="context" />
+                  <CodeText line={l} rc={rc} />
                 </span>
               </div>
             )}
@@ -231,7 +430,7 @@ function ContextLines({ lines, split, lang }: { lines: DiffLine[]; split: boolea
                 <span className="sign-char">{l.kind === 'add' ? '+' : ''}</span>
               </span>
               <span className="code">
-                <CodeText text={l.text} lang={lang} kind={l.kind} />
+                <CodeText line={l} rc={rc} />
               </span>
             </div>
           </div>
@@ -249,7 +448,7 @@ function ContextLines({ lines, split, lang }: { lines: DiffLine[]; split: boolea
             <span className="sign-char">{l.kind === 'add' ? '+' : ''}</span>
           </span>
           <span className="code">
-            <CodeText text={l.text} lang={lang} kind={l.kind} />
+            <CodeText line={l} rc={rc} />
           </span>
         </div>
       ))}
@@ -276,10 +475,10 @@ function ExpanderBar({
       <span className="sticky-x">
         <button
           className="ctx-expand"
-          title={dir === 'up' ? 'Show more lines above this hunk' : 'Show more lines below'}
+          title={dir === 'up' ? 'Show more lines above' : 'Show more lines below'}
           onClick={onExpand}
         >
-          {dir === 'up' ? '↑' : '↓'} {step}
+          {dir === 'up' ? '↑' : '↓'} {step} more line{step === 1 ? '' : 's'}
         </button>
         {label && <span className="ctx-label">{label}</span>}
       </span>
@@ -288,41 +487,46 @@ function ExpanderBar({
 }
 
 interface HunkViewProps {
-  hunk: DiffHunk;
+  hunk: ViewHunk;
+  focused: boolean;
   hi: number;
   fileId: string;
-  lang: string | null;
+  rc: LineRender;
   showHeader: boolean;
   canComment: boolean;
+  /** Every line shown, past MAX_RENDER_LINES */
   expanded: boolean;
-  onExpand: (hi: number) => void;
-  /** resolved anchor → comment, only anchors within this hunk */
+  onExpand: (key: string) => void;
+  /** This hunk's comments, by anchor */
   comments: ReadonlyMap<string, LineComment>;
-  /** The open comment editor's anchor — only when it is in this hunk */
-  editingAnchor: string | null;
-  onEdit: (anchor: string | null) => void;
+  /** The open comment editor, only when it is in this hunk */
+  editing: Editing | null;
+  onEdit: OnEdit;
+  draft: DraftRef;
   onSaveComment?: (comment: LineComment) => void;
   onDeleteComment?: (anchor: string) => void;
   lineAnnotations?: Map<number, ReactNode>;
   /** Estimated rendered line height for contain-intrinsic-size */
   lineHeightPx: number;
   viewMode: DiffViewMode;
-  /** line index → changed word-level segment (paired del/add lines) */
-  ranges: ReadonlyMap<number, IntraRange>;
+  /** line index → changed word-level segments (paired del/add lines) */
+  ranges: ReadonlyMap<number, IntraRange[]>;
 }
 
 const HunkView = memo(function HunkView({
   hunk,
+  focused,
   hi,
   fileId,
-  lang,
+  rc,
   showHeader,
   canComment,
   expanded,
   onExpand,
   comments,
-  editingAnchor,
+  editing,
   onEdit,
+  draft,
   onSaveComment,
   onDeleteComment,
   lineAnnotations,
@@ -349,36 +553,46 @@ const HunkView = memo(function HunkView({
     containIntrinsicHeight: `auto ${(viewMode === 'split' ? splitRows.length : visibleLines.length) * lineHeightPx}px`,
   };
 
-  // A saved comment (bubble or editor) renders full-width under its row, in
-  // both view modes.
+  // A comment (or the editor) renders right under its line, across the
+  // code column, in both view modes: what you ask sits where you asked it.
   const commentBlock = (anchor: string, lineNo?: number): ReactNode => {
     const existing = comments.get(anchor);
-    if (existing && editingAnchor !== anchor) {
+    const line = hunk.lines[Number(anchor.split(':')[1])];
+    const isEditing = editing?.anchor === anchor;
+    if (existing && !isEditing) {
       return (
-        <div className="comment-row">
-          <div className="comment-bubble">
-            <div className="spread">
-              <span className="comment-author">Your comment{existing.line ? ` · line ${existing.line}` : ''}</span>
-              <span className="flex" style={{ gap: 4 }}>
-                <button className="btn btn-sm" onClick={() => onEdit(anchor)}>Edit</button>
-                <button className="btn btn-sm" onClick={() => onDeleteComment?.(existing.anchor)}>Delete</button>
+        <div className="note-row">
+          <div className="note">
+            <div className="note-head">
+              <span className="note-who">You{existing.line ? ` · line ${existing.line}` : ''}</span>
+              <span className="note-actions">
+                <button className="btn-mini" onClick={() => onEdit(anchor, existing.suggestion !== undefined)}>Edit</button>
+                <button className="btn-mini" onClick={() => onDeleteComment?.(existing.anchor)}>Delete</button>
               </span>
             </div>
-            <div className="mt-2" style={{ whiteSpace: 'pre-wrap' }}>{existing.text}</div>
+            {existing.suggestion !== undefined && line && (
+              <SuggestionView lineText={line.text} suggestion={existing.suggestion} lang={rc.lang} />
+            )}
+            {existing.text && <div className="note-text">{existing.text}</div>}
           </div>
         </div>
       );
     }
-    if (editingAnchor === anchor) {
+    if (isEditing) {
       return (
-        <div className="comment-row">
+        <div className="note-row">
           <CommentEditor
             initial={existing?.text ?? ''}
+            initialSuggestion={existing?.suggestion}
+            draft={draft}
+            request={editing}
+            lineText={line?.text ?? ''}
+            lineNo={lineNo}
+            canSuggest={Boolean(line) && line.kind !== 'del'}
+            lang={rc.lang}
             onCancel={() => onEdit(null)}
-            onSave={(text) => {
-              // Editing an existing comment must keep its original anchor
-              // (the store key), even when it renders re-resolved.
-              onSaveComment?.({ anchor: existing?.anchor ?? anchor, line: existing?.line ?? lineNo, text });
+            onSave={(text, suggestion) => {
+              onSaveComment?.({ anchor, line: lineNo, text, suggestion });
               onEdit(null);
             }}
           />
@@ -389,10 +603,10 @@ const HunkView = memo(function HunkView({
   };
 
   return (
-    <div style={style}>
+    <div style={style} className={focused ? 'hunk-body focused' : 'hunk-body'}>
       {showHeader && (
         <div className="diff-hunk-header">
-          <span className="sticky-x">{hunk.header}</span>
+          <span className="sticky-x">{hunkSection(hunk.header) || '⋯'}</span>
         </div>
       )}
 
@@ -405,21 +619,17 @@ const HunkView = memo(function HunkView({
             <div key={li}>
               <div
                 id={`dl-${fileId}-${hi}-${li}`}
-                className={`diff-line ${line.kind}${comments.has(anchor) ? ' commented' : ''}`}
+                className={`diff-line ${line.kind}${line.moved ? ' moved' : ''}${comments.has(anchor) ? ' commented' : ''}`}
                 data-line={line.newLine}
               >
                 <span className="ln">{line.oldLine ?? ''}</span>
                 <span className="ln">{line.newLine ?? ''}</span>
                 <span className="sign">
-                  {canComment && (
-                    <button className="add-comment" title="Comment on this line" onClick={() => onEdit(anchor)}>
-                      +
-                    </button>
-                  )}
+                  {canComment && <LineActions anchor={anchor} kind={line.kind} onEdit={onEdit} />}
                   <span className="sign-char">{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ''}</span>
                 </span>
                 <span className="code">
-                  <CodeText text={line.text} lang={lang} range={ranges.get(li)} kind={line.kind} />
+                  <CodeText line={line} ranges={ranges.get(li)} rc={rc} />
                 </span>
               </div>
               {annotation && <div className="annotation-row">{annotation}</div>}
@@ -439,9 +649,9 @@ const HunkView = memo(function HunkView({
                 <SplitCell
                   side={row.left}
                   num={row.left?.line.oldLine}
-                  // context rows share one li — the right cell owns the id then
+                  // context rows share one li: the right cell owns the id then
                   id={row.left && row.left.li !== row.right?.li ? `dl-${fileId}-${hi}-${row.left.li}` : undefined}
-                  lang={lang}
+                  rc={rc}
                   ranges={ranges}
                   canComment={canComment}
                   commented={leftAnchor ? comments.has(leftAnchor) : false}
@@ -452,7 +662,7 @@ const HunkView = memo(function HunkView({
                   side={row.right}
                   num={row.right?.line.newLine}
                   id={row.right ? `dl-${fileId}-${hi}-${row.right.li}` : undefined}
-                  lang={lang}
+                  rc={rc}
                   ranges={ranges}
                   canComment={canComment}
                   commented={rightAnchor ? comments.has(rightAnchor) : false}
@@ -468,7 +678,7 @@ const HunkView = memo(function HunkView({
         })}
 
       {hidden > 0 && (
-        <button className="diff-expander" onClick={() => onExpand(hi)}>
+        <button className="diff-expander" onClick={() => onExpand(hunkKey(hunk, hi))}>
           <span className="sticky-x">↓ Show {hidden} more line{hidden > 1 ? 's' : ''}</span>
         </button>
       )}
@@ -488,12 +698,62 @@ export function DiffView({
   viewMode = 'unified',
   wrap = true,
   onLoadFileLines,
+  onLoadBaseLines,
+  focusOld,
+  onMovedPeer,
   onLineClick,
+  renderHunkHeader,
+  collapsedHunks,
+  focusedHunk,
+  commentRequest,
 }: DiffViewProps) {
-  const [editingAnchor, setEditingAnchor] = useState<string | null>(null);
-  const [expandedHunks, setExpandedHunks] = useState<Set<number>>(new Set());
-  const expandHunk = useCallback((index: number) => setExpandedHunks((prev) => new Set(prev).add(index)), []);
-  const editingHunk = editingAnchor === null ? null : Number(editingAnchor.split(':')[0]);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const draft = useRef<Draft | null>(null);
+  const onEdit = useCallback<OnEdit>((anchor, suggest = false) => {
+    if (!anchor) draft.current = null;
+    setEditing(anchor ? { anchor, suggest } : null);
+  }, []);
+
+  // The agent can rewrite the file while you type. The editor follows its
+  // line (same hunk, same text) and closes only when that line is gone.
+  const shown = useRef(file);
+  useEffect(() => {
+    const before = shown.current;
+    shown.current = file;
+    if (before === file) return;
+    setEditing((e) => {
+      if (!e) return e;
+      const [hi, li] = e.anchor.split(':').map(Number);
+      const hunk = before.hunks[hi];
+      const line = hunk?.lines[li];
+      const nhi = hunk ? file.hunks.findIndex((h, i) => hunkKey(h, i) === hunkKey(hunk, hi)) : -1;
+      const nli = line && nhi >= 0 ? file.hunks[nhi].lines.findIndex((l) => l.kind === line.kind && l.text === line.text) : -1;
+      if (nli < 0) {
+        draft.current = null;
+        return null;
+      }
+      const anchor = `${nhi}:${nli}`;
+      if (draft.current) draft.current = { ...draft.current, anchor };
+      return { ...e, anchor };
+    });
+  }, [file]);
+
+  const seenRequest = useRef(commentRequest?.nonce);
+  useEffect(() => {
+    if (!commentRequest || commentRequest.nonce === seenRequest.current || !onSaveComment) return;
+    seenRequest.current = commentRequest.nonce;
+    const lines = file.hunks[commentRequest.hi]?.lines ?? [];
+    const li = Math.max(0, lines.findIndex((l) => l.kind !== 'context'));
+    onEdit(`${commentRequest.hi}:${li}`);
+    requestAnimationFrame(() =>
+      document.getElementById(`dl-${file.id}-${commentRequest.hi}-${li}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }),
+    );
+    // Only a new request opens the editor, on the file shown now
+  }, [commentRequest?.nonce]);
+
+  const [expandedHunks, setExpandedHunks] = useState<Set<string>>(new Set());
+  const expandHunk = useCallback((key: string) => setExpandedHunks((prev) => new Set(prev).add(key)), []);
+  const editingHunk = editing === null ? null : Number(editing.anchor.split(':')[0]);
   const canComment = Boolean(onSaveComment);
   const lang = useMemo(() => extToLang(file.language), [file.language]);
 
@@ -502,7 +762,8 @@ export function DiffView({
   // --- Context expansion: unchanged lines pulled from the working tree ---
   const [fileLines, setFileLines] = useState<string[] | null>(null);
   const [expandFailed, setExpandFailed] = useState(false);
-  const [expandAbove, setExpandAbove] = useState<Map<number, number>>(new Map());
+  /** Lines revealed above each hunk, by hunk key */
+  const [expandAbove, setExpandAbove] = useState<Map<string, number>>(new Map());
   const [expandBelow, setExpandBelow] = useState(0);
   const linesPromise = useRef<Promise<string[] | null> | null>(null);
   const canExpand = Boolean(onLoadFileLines) && !expandFailed && file.hunks.length > 0;
@@ -556,11 +817,63 @@ export function DiffView({
     setExpandFailed(true);
     return null;
   };
-  const expandUp = async (hi: number, gap: number) => {
+
+  // --- Whole-file syntax colors: the file now, and HEAD's version for the
+  // removed lines. Reloaded whenever the file's changes do (a new `file`).
+  const [baseLines, setBaseLines] = useState<string[] | null>(null);
+  useEffect(() => {
+    linesPromise.current = null;
+    setFileLines(null);
+    setBaseLines(null);
+    setExpandFailed(false);
+    if (!lang) return;
+    let live = true;
+    if (onLoadFileLines && file.changeType !== 'deleted') {
+      const pending = onLoadFileLines();
+      linesPromise.current = pending;
+      void pending.then((lines) => {
+        if (live && lines?.length) setFileLines(lines);
+      });
+    }
+    if (onLoadBaseLines && file.changeType !== 'created') {
+      void onLoadBaseLines().then((lines) => {
+        if (live && lines?.length) setBaseLines(lines);
+      });
+    }
+    return () => {
+      live = false;
+    };
+    // The loaders are read when the file changes, not followed
+  }, [file, lang]);
+  const newTokens = useMemo(() => (fileLines ? highlightFile(fileLines, lang) : null), [fileLines, lang]);
+  const oldTokens = useMemo(() => (baseLines ? highlightFile(baseLines, lang) : null), [baseLines, lang]);
+  const tokensOf = useCallback<TokensOf>(
+    (l) => {
+      // A line takes the file's tokens only while its text is that line's
+      if (l.kind === 'del') {
+        return l.oldLine != null && baseLines?.[l.oldLine - 1] === l.text ? oldTokens?.[l.oldLine - 1] : undefined;
+      }
+      return l.newLine != null && fileLines?.[l.newLine - 1] === l.text ? newTokens?.[l.newLine - 1] : undefined;
+    },
+    [fileLines, baseLines, newTokens, oldTokens],
+  );
+  const movedRef = useRef(onMovedPeer);
+  movedRef.current = onMovedPeer;
+  const hasMovedLinks = Boolean(onMovedPeer);
+  const rc = useMemo<LineRender>(
+    () => ({
+      lang,
+      tokensOf,
+      filePath: file.path,
+      onMovedPeer: hasMovedLinks ? (path, line, old) => movedRef.current?.(path, line, old) : undefined,
+    }),
+    [lang, tokensOf, file.path, hasMovedLinks],
+  );
+  const expandUp = async (key: string, gap: number) => {
     if (!(await ensureLines())) return;
     setExpandAbove((prev) => {
       const next = new Map(prev);
-      next.set(hi, Math.min(gap, (prev.get(hi) ?? 0) + EXPAND_STEP));
+      next.set(key, Math.min(gap, (prev.get(key) ?? 0) + EXPAND_STEP));
       return next;
     });
   };
@@ -569,8 +882,11 @@ export function DiffView({
     setExpandBelow((prev) => prev + EXPAND_STEP);
   };
 
+  // The gap above a hunk can shrink when the file changes: never reveal
+  // more than it holds now
+  const revealedAbove = (hi: number) => Math.min(expandAbove.get(hunkKey(file.hunks[hi], hi)) ?? 0, gapAbove(hi));
   const contextBefore = (hi: number): DiffLine[] => {
-    const revealed = expandAbove.get(hi) ?? 0;
+    const revealed = revealedAbove(hi);
     const start = hunkMeta[hi].startNew;
     if (!fileLines || revealed === 0 || start == null) return [];
     const out: DiffLine[] = [];
@@ -588,10 +904,10 @@ export function DiffView({
     }
     return null;
   })();
-  // A trailing newline yields a phantom empty last line — don't offer it
+  // A trailing newline yields a phantom empty last line: don't offer it
   const effectiveLen = fileLines ? (fileLines[fileLines.length - 1] === '' ? fileLines.length - 1 : fileLines.length) : 0;
-  // In a created file every working-tree line is an addition, not context —
-  // expanding past a truncated new-file hunk must stay green
+  // In a created file every line is an addition, not context: expanding
+  // past a truncated new-file hunk must stay green
   const createdFile = file.changeType === 'created';
   const tailLines: DiffLine[] = [];
   if (fileLines && lastEndNew != null && expandBelow > 0) {
@@ -606,16 +922,13 @@ export function DiffView({
     }
   }
   const tailRemaining = fileLines && lastEndNew != null ? Math.max(0, effectiveLen - lastEndNew - tailLines.length) : null;
-  // For a created file the hunk carries the whole tree content up to the
-  // truncation cap — when it already reaches linesAdded (the full count)
-  // there is nothing below, so don't offer a dead ↓ expander pre-load
+  // A created file's hunk carries the whole file up to the truncation cap.
+  // When it already reaches linesAdded (the full count) there is nothing
+  // below, so no ↓ expander is offered before the file loads.
   const tailPossible = !(createdFile && lastEndNew != null && lastEndNew >= file.linesAdded);
 
   // --- Side-by-side divider: draggable left/right ratio, persisted ---
-  const [splitPos, setSplitPos] = useState(() => {
-    const v = Number(localStorage.getItem('ars:sxs-split'));
-    return Number.isFinite(v) && v >= 25 && v <= 75 ? v : 50;
-  });
+  const [splitPos, setSplitPos] = usePref<number>('ars:sxs-split', SPLIT_DEFAULT, (v) => Number(v) >= SPLIT_MIN && Number(v) <= SPLIT_MAX);
   const diffRef = useRef<HTMLDivElement>(null);
   const dragDivider = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -625,16 +938,13 @@ export function DiffView({
     handle.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent) => {
       const rect = el.getBoundingClientRect();
-      setSplitPos(Math.min(75, Math.max(25, ((ev.clientX - rect.left) / rect.width) * 100)));
+      const pos = Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, ((ev.clientX - rect.left) / rect.width) * 100));
+      setSplitPos(Math.round(pos * 10) / 10);
     };
     const up = () => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
       handle.removeEventListener('pointercancel', up);
-      setSplitPos((v) => {
-        localStorage.setItem('ars:sxs-split', String(Math.round(v * 10) / 10));
-        return v;
-      });
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
@@ -644,13 +954,12 @@ export function DiffView({
   const commentsByHunk = useMemo(() => {
     const byHunk = new Map<number, Map<string, LineComment>>();
     for (const c of comments) {
-      const anchor = resolveAnchor(file, c);
-      const hi = Number(anchor.split(':')[0]);
+      const hi = Number(c.anchor.split(':')[0]);
       if (!byHunk.has(hi)) byHunk.set(hi, new Map());
-      byHunk.get(hi)!.set(anchor, c);
+      byHunk.get(hi)!.set(c.anchor, c);
     }
     return byHunk;
-  }, [comments, file]);
+  }, [comments]);
 
   const onFocusHandledRef = useRef(onFocusHandled);
   onFocusHandledRef.current = onFocusHandled;
@@ -659,14 +968,13 @@ export function DiffView({
     if (!focusLine) return;
     let exact: { hi: number; li: number } | null = null;
     let nearest: { hi: number; li: number; line: number } | null = null;
+    const numberOf = (l: DiffLine) => (focusOld ? (l.kind === 'add' ? undefined : l.oldLine) : l.newLine);
     for (let hi = 0; hi < file.hunks.length; hi++) {
       const lines = file.hunks[hi].lines;
       for (let li = 0; li < lines.length; li++) {
-        const l = lines[li];
-        if (l.newLine === focusLine && !exact) exact = { hi, li };
-        if (l.newLine != null && l.newLine <= focusLine && (!nearest || l.newLine > nearest.line)) {
-          nearest = { hi, li, line: l.newLine };
-        }
+        const n = numberOf(lines[li]);
+        if (n === focusLine && !exact) exact = { hi, li };
+        if (n != null && n <= focusLine && (!nearest || n > nearest.line)) nearest = { hi, li, line: n };
       }
     }
     const target: { hi: number; li: number } | null = exact ?? nearest;
@@ -675,7 +983,7 @@ export function DiffView({
       return;
     }
     if (target.li >= MAX_RENDER_LINES) {
-      setExpandedHunks((prev) => new Set(prev).add(target.hi));
+      setExpandedHunks((prev) => new Set(prev).add(hunkKey(file.hunks[target.hi], target.hi)));
     }
     // Two frames: let an expanded hunk render before scrolling into it.
     // Cancel both on cleanup so a quick file change cannot run this file's
@@ -691,29 +999,19 @@ export function DiffView({
       cancelAnimationFrame(outer);
       cancelAnimationFrame(inner);
     };
-  }, [focusLine, file]);
+  }, [focusLine, focusOld, file]);
 
   if (file.hunks.length === 0) {
     return (
       <div className="diff-empty">
-        {file.changeType === 'created' ? (
-          <>
-            <strong>New file</strong> — its content was not captured in the transcript.
-            <div className="faint mt-2">You can still decide on it, or open it in your editor.</div>
-          </>
-        ) : (
-          <>
-            <strong>No diff captured</strong> for this change.
-            <div className="faint mt-2">The transcript recorded the edit but not its patch content.</div>
-          </>
-        )}
+        <strong>No line changes</strong> to show here.
       </div>
     );
   }
 
-  const lineHeightPx = Math.round(fontSize * 1.6);
-  // Two independent horizontal scrollers would fight each other — the
-  // side-by-side view always wraps.
+  const lineHeightPx = Math.round(fontSize * LINE_HEIGHT);
+  // Two horizontal scrollers would fight each other, so the side-by-side
+  // view always wraps.
   const effectiveWrap = wrap || viewMode === 'split';
 
   return (
@@ -735,49 +1033,52 @@ export function DiffView({
         <div
           className="sxs-divider"
           style={{ left: `${splitPos}%` }}
-          title="Drag to resize the panes — double-click to reset"
+          title="Drag to resize. Double-click to reset."
           onPointerDown={dragDivider}
-          onDoubleClick={() => {
-            setSplitPos(50);
-            localStorage.setItem('ars:sxs-split', '50');
-          }}
+          onDoubleClick={() => setSplitPos(SPLIT_DEFAULT)}
         />
-      )}
-      {file.changeType === 'created' && (
-        <div className="diff-hunk-header" style={{ color: 'var(--ok)', background: 'var(--ok-dim)' }}>
-          <span className="sticky-x">New file — {file.linesAdded} lines</span>
-        </div>
       )}
       {file.hunks.map((hunk, hi) => {
         const meta = hunkMeta[hi];
-        const revealed = expandAbove.get(hi) ?? 0;
+        const key = hunkKey(hunk, hi);
+        const revealed = revealedAbove(hi);
         const gap = gapAbove(hi);
         const remaining = Math.max(0, gap - revealed);
-        const wantsHeader = !(file.changeType === 'created' && file.hunks.length === 1);
+        const custom = Boolean(renderHunkHeader);
+        const wantsHeader = !custom && !(file.changeType === 'created' && file.hunks.length === 1);
         const expandableHunk = canExpand && meta.startNew != null;
+        const collapsed = collapsedHunks?.has(hi) ?? false;
         return (
-          <Fragment key={hi}>
-            {expandableHunk && remaining > 0 && (
-              <ExpanderBar dir="up" label={hunk.header} remaining={remaining} onExpand={() => expandUp(hi, gap)} />
-            )}
-            {expandableHunk && remaining === 0 && revealed === 0 && wantsHeader && (
-              <div className="diff-hunk-header">
-                <span className="sticky-x">{hunk.header}</span>
+          <Fragment key={key}>
+            {custom && (
+              <div id={`hk-${file.id}-${hi}`} className={`hunk-head-slot${focusedHunk === hi ? ' focused' : ''}`}>
+                {renderHunkHeader?.(hi)}
               </div>
             )}
-            <ContextLines lines={contextBefore(hi)} split={viewMode === 'split'} lang={lang} />
+            {!collapsed && expandableHunk && remaining > 0 && (
+              <ExpanderBar dir="up" label={custom ? undefined : hunkSection(hunk.header)} remaining={remaining} onExpand={() => expandUp(key, gap)} />
+            )}
+            {!collapsed && expandableHunk && remaining === 0 && revealed === 0 && wantsHeader && (
+              <div className="diff-hunk-header">
+                <span className="sticky-x">{hunkSection(hunk.header) || '⋯'}</span>
+              </div>
+            )}
+            {!collapsed && <ContextLines lines={contextBefore(hi)} split={viewMode === 'split'} rc={rc} />}
+            {!collapsed && (
             <HunkView
               hunk={hunk}
+              focused={focusedHunk === hi}
               hi={hi}
               fileId={file.id}
-              lang={lang}
+              rc={rc}
               showHeader={!expandableHunk && wantsHeader}
               canComment={canComment}
-              expanded={expandedHunks.has(hi)}
+              expanded={expandedHunks.has(key)}
               onExpand={expandHunk}
               comments={commentsByHunk.get(hi) ?? EMPTY_COMMENTS}
-              editingAnchor={editingHunk === hi ? editingAnchor : null}
-              onEdit={setEditingAnchor}
+              editing={editingHunk === hi ? editing : null}
+              onEdit={onEdit}
+              draft={draft}
               onSaveComment={onSaveComment}
               onDeleteComment={onDeleteComment}
               lineAnnotations={lineAnnotations}
@@ -785,12 +1086,13 @@ export function DiffView({
               viewMode={viewMode}
               ranges={hunkRanges[hi] ?? EMPTY_RANGES}
             />
+            )}
           </Fragment>
         );
       })}
       {canExpand && lastEndNew != null && tailPossible && (
         <>
-          <ContextLines lines={tailLines} split={viewMode === 'split'} lang={lang} />
+          <ContextLines lines={tailLines} split={viewMode === 'split'} rc={rc} />
           {(tailRemaining === null || tailRemaining > 0) && (
             <ExpanderBar dir="down" remaining={tailRemaining} onExpand={expandDown} />
           )}

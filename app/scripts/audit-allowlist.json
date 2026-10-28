@@ -1,0 +1,6 @@
+[
+  {
+    "id": "GHSA-qwgh-2vcv-g2f7",
+    "reason": "block-buffer 0.10.4 keeps its cursor in a separate field, not inside the block as the affected code does, so a caught panic cannot corrupt it. The fix exists only in 0.12.1, which sha2 0.10 (used by ARS and by Tauri) cannot use. Checked on 2026-10-28."
+  }
+]

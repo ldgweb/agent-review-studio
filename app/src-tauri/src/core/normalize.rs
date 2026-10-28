@@ -117,7 +117,7 @@ static PERFORMANCE_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)cache|queue|worker|cron|index\.(sql|php)").unwrap());
 static OUTSIDE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"^([A-Za-z]:|/|~)").unwrap());
 
-// Local heuristic checks. The fixtures pin this behavior — treat it as frozen.
+// Local heuristic checks. The fixtures pin this behavior: treat it as frozen.
 static SECRET_LINE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r#"(?i)(AKIA[0-9A-Z]{16}|(api[_-]?key|secret|token|password|passwd|authorization|bearer)\s*[:=]\s*["']?[A-Za-z0-9_\-.]{8,})"#,
@@ -137,7 +137,28 @@ static TEST_PATH: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-fn score_to_level(score: i64) -> RiskLevel {
+/// The built-in per-line checks, shared by the session normalizer and the
+/// project review.
+pub(crate) enum LineCheck {
+    Secret,
+    Leftover,
+}
+
+pub(crate) fn line_check(text: &str) -> Option<LineCheck> {
+    if SECRET_LINE.is_match(text) {
+        Some(LineCheck::Secret)
+    } else if LEFTOVER_LINE.is_match(text) {
+        Some(LineCheck::Leftover)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn is_test_path(path: &str) -> bool {
+    TEST_PATH.is_match(path)
+}
+
+pub(crate) fn score_to_level(score: i64) -> RiskLevel {
     if score >= 80 {
         RiskLevel::Critical
     } else if score >= 60 {
@@ -149,7 +170,7 @@ fn score_to_level(score: i64) -> RiskLevel {
     }
 }
 
-fn language_of(rel: &str) -> String {
+pub(crate) fn language_of(rel: &str) -> String {
     let ext = if rel.contains('.') {
         rel.rsplit('.').next().unwrap_or("").to_lowercase()
     } else {
@@ -162,7 +183,11 @@ fn language_of(rel: &str) -> String {
     }
 }
 
-fn risk_flags_for(rel: &str, added_lines: &[String], lines_added: i64) -> Vec<RiskDimension> {
+pub(crate) fn risk_flags_for(
+    rel: &str,
+    added_lines: &[String],
+    lines_added: i64,
+) -> Vec<RiskDimension> {
     let mut flags = Vec::new();
     let haystack = format!("{}\n{}", rel, added_lines.join("\n"));
     if SECURITY_PATTERN.is_match(&haystack) {
@@ -180,7 +205,7 @@ fn risk_flags_for(rel: &str, added_lines: &[String], lines_added: i64) -> Vec<Ri
     flags
 }
 
-fn area_id_of(top: &str) -> String {
+pub(crate) fn area_id_of(top: &str) -> String {
     let sanitized: String = top
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -409,7 +434,7 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
                 "severity": "low",
                 "dimension": "maintainability",
                 "title": format!("Large single-file change (+{} lines)", file.lines_added),
-                "body": "This file gained a lot of lines in one session — consider splitting it for reviewability.",
+                "body": "This file gained a lot of lines in one session. Consider splitting it, so it is easier to review.",
                 "filePath": file.path,
                 "line": 1,
             }));
@@ -425,7 +450,7 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
                 "severity": "medium",
                 "title": "Test file shrank",
                 "body": format!(
-                    "This test file lost more lines than it gained (−{} +{}) — confirm coverage was not dropped.",
+                    "This test file lost more lines than it gained (−{} +{}). Check that no test coverage was dropped.",
                     file.lines_removed, file.lines_added
                 ),
                 "filePath": file.path,
@@ -492,6 +517,8 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
         timeline: raw.timeline,
         risks,
         findings,
+        turns: Vec::new(),
+        edits: Vec::new(),
         archived: None,
     })
 }
@@ -536,7 +563,7 @@ pub fn parse_date(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
         return Some(dt.with_timezone(&Utc));
     }
-    // Naive "YYYY-MM-DD HH:MM:SS" (aider's local timestamps) — treated as UTC
+    // Naive "YYYY-MM-DD HH:MM:SS" (aider's local timestamps), treated as UTC
     if let Ok(naive) = NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S") {
         return Some(Utc.from_utc_datetime(&naive));
     }

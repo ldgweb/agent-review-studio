@@ -11,154 +11,121 @@ function load(relative) {
   runInNewContext(outputText, { exports });
   return exports;
 }
-const { verificationStatus } = load('../src/lib/evidence.ts');
-const { reducer, emptyState, effectiveStatus } = load('../src/lib/approvals.ts');
+const R = load('../src/lib/review.ts');
+const I = load('../src/lib/intraline.ts');
+// Values built inside the vm context have their own prototypes; copy them
+// into this realm before structural comparison.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+const AT = '2026-10-28T10:00:00.000Z';
 
-test('missing, failed and pre-edit tests never verify a later edit', () => {
-  const file = { path: 'a.ts' };
-  const edit = { kind: 'file-edit', filePath: 'a.ts' };
-  for (const code of [undefined, null, 1]) {
-    assert.equal(verificationStatus({ timeline: [edit, { kind: 'test-run', exitCode: code }] }, file), 'unverified');
-  }
-  assert.equal(verificationStatus({ timeline: [{ kind: 'test-run', exitCode: 0 }, edit] }, file), 'unverified');
-  assert.equal(verificationStatus({ timeline: [edit, { kind: 'test-run', exitCode: 0 }] }, file), 'verified');
-  assert.equal(verificationStatus({ timeline: [edit] }, file), 'no-signal');
+const emptyState = () => ({ version: 1, hunks: {}, files: {}, notes: {}, comments: [], findings: {}, rounds: [] });
+const line = (kind, text, n) => ({ kind, text, ...(kind !== 'del' ? { newLine: n } : {}), ...(kind !== 'add' ? { oldLine: n } : {}) });
+const hunk = (id, lines, origin = { kind: 'agent', matched: 1, total: 1 }) => ({ id, header: '@@ -1 +1 @@', lines, origin });
+const file = (path, hunks, extra = {}) => ({
+  id: `f-${path}`, path, changeType: 'modified', untracked: false, binary: false, language: 'ts',
+  linesAdded: 1, linesRemoved: 0, areaId: 'a', riskFlags: [], fingerprint: `fp-${path}`, hunks,
+  verification: 'no-signal', sessionIds: [], ...extra,
+});
+const review = (files, extra = {}) => ({
+  project: { root: '/w/shop', name: 'shop', branch: 'main', head: 'abc' }, fingerprint: 'r', files,
+  sessions: [], findings: [], groups: [], risks: [], areas: [], state: emptyState(), stateRev: 0,
+  stats: {}, warnings: [], disabledSources: [], ...extra,
 });
 
-test('a new review revision invalidates old file decisions, comments and finalization', () => {
-  let store = reducer({}, { type: 'set-files', sessionId: 's', fileIds: ['lf-1'], state: 'approved', reviewRevision: 'v1' });
-  store = reducer(store, { type: 'set-line-comment', sessionId: 's', fileId: 'lf-1', comment: { anchor: '0:0', text: 'old' }, reviewRevision: 'v1' });
-  store = reducer(store, { type: 'finalize', sessionId: 's', decision: 'approved', reviewRevision: 'v1' });
-  store = reducer(store, { type: 'set-files', sessionId: 's', fileIds: ['lf-2'], state: 'rejected', reviewRevision: 'v2' });
-  assert.equal(store.s.fileStates['lf-1'], undefined);
-  assert.equal(store.s.fileStates['lf-2'], 'rejected');
-  assert.equal(store.s.sessionDecision, undefined);
-  assert.equal(Object.keys(store.s.lineComments).length, 0);
-  assert.equal(store.s.reviewRevision, 'v2');
+test('a file verdict goes to the undecided changes first, then to all, then toggles off', () => {
+  const f = file('a.ts', [hunk('h1', [line('add', 'x', 1)]), hunk('h2', [line('add', 'y', 9)])]);
+  let s = R.setHunkVerdict(emptyState(), f, 'h1', 'rejected', AT);
+  s = R.setFileVerdict(s, f, 'approved', AT);
+  assert.equal(s.hunks.h1.verdict, 'rejected', 'a decided change keeps its verdict');
+  assert.equal(s.hunks.h2.verdict, 'approved');
+  assert.equal(R.fileVerdict(s, f), 'mixed');
+  s = R.setFileVerdict(s, f, 'approved', AT);
+  assert.equal(R.fileVerdict(s, f), 'approved', 'nothing undecided: all of them');
+  s = R.setFileVerdict(s, f, 'approved', AT);
+  assert.equal(R.fileVerdict(s, f), 'pending', 'the same verdict again clears it');
 });
 
-test('legacy and changed-transcript approvals do not override inbox status', () => {
-  const session = { status: 'needs-review', contentHash: 'new' };
-  const approval = { ...emptyState('s'), sessionDecision: 'approved' };
-  assert.equal(effectiveStatus(session, approval), 'needs-review');
-  assert.equal(effectiveStatus(session, { ...approval, reviewRevision: 'r', contentHash: 'old' }), 'needs-review');
-  assert.equal(effectiveStatus(session, { ...approval, reviewRevision: 'r', contentHash: 'new' }), 'approved');
+test('verdicts bind to content: a changed hunk or other bytes drop the decision', () => {
+  const before = file('a.ts', [hunk('h1', [line('add', 'x', 1)])]);
+  const s = R.setFileVerdict(emptyState(), before, 'approved', AT);
+  const after = file('a.ts', [hunk('h1b', [line('add', 'x2', 1)])]);
+  assert.equal(R.fileVerdict(s, after), 'pending');
+  const bin = file('logo.png', [], { binary: true });
+  const sb = R.setFileVerdict(emptyState(), bin, 'rejected', AT);
+  assert.equal(R.fileVerdict(sb, bin), 'rejected');
+  assert.equal(R.fileVerdict(sb, { ...bin, fingerprint: 'fp-new' }), 'pending');
 });
 
-test('consecutive edits retain both file decisions', () => {
-  let store = reducer({}, { type: 'set-files', sessionId: 's', fileIds: ['a'], state: 'approved', reviewRevision: 'v1' });
-  store = reducer(store, { type: 'set-files', sessionId: 's', fileIds: ['b'], state: 'rejected', reviewRevision: 'v1' });
-  assert.equal(store.s.fileStates.a, 'approved');
-  assert.equal(store.s.fileStates.b, 'rejected');
+test('comments follow their line, and go outdated with their change', () => {
+  const h = hunk('h1', [line('context', 'a', 1), line('add', 'console.log(x)', 2)]);
+  const c = { id: 'c1', path: 'a.ts', hunkId: 'h1', li: 0, kind: 'add', lineText: 'console.log(x)', line: 2, text: 'drop it', at: AT };
+  assert.equal(R.commentLineIndex(h, c), 1, 'found again by kind and text');
+  const s = { ...emptyState(), comments: [c] };
+  assert.equal(R.currentComments(s, [file('a.ts', [h])]).length, 1);
+  assert.equal(R.outdatedComments(s, [file('a.ts', [hunk('h2', [])])]).length, 1);
 });
 
-const { computeDecision } = load('../src/lib/approvals.ts');
-const { fileWeight, needsAttention, groupFiles, sortFindings } = load('../src/lib/triage.ts');
-// Values built inside the vm context have their own Array prototype; copy
-// them into this realm before structural comparison.
-const ids = (items) => Array.from(items, (x) => x.id);
-const keys = (groups) => Array.from(groups, (g) => g.key);
-
-test('computeDecision is neutral for zero files and follows the verdicts otherwise', () => {
-  const none = computeDecision([], emptyState('s'));
-  assert.equal(none.decision, null);
-  assert.equal(none.approved + none.rejected + none.corrections + none.pending, 0);
-  const at = (fileStates) => ({ ...emptyState('s'), fileStates });
-  assert.equal(computeDecision(['a', 'b'], at({ a: 'approved', b: 'approved' })).decision, 'approved');
-  assert.equal(computeDecision(['a', 'b'], at({ a: 'rejected', b: 'rejected' })).decision, 'rejected');
-  assert.equal(computeDecision(['a', 'b'], at({ a: 'approved', b: 'rejected' })).decision, 'partially-approved');
-  assert.equal(computeDecision(['a', 'b'], at({ a: 'approved' })).decision, 'partially-approved');
-  assert.equal(computeDecision(['a', 'b'], at({ a: 'rejected', b: 'correction-requested' })).decision, 'corrections-requested');
-  assert.equal(computeDecision(['a', 'b'], at({ a: 'approved' })).pending, 1);
-});
-
-test('review-content changes clear a finalized decision; notes do not', () => {
-  const finalized = () => {
-    const store = reducer({}, { type: 'set-line-comment', sessionId: 's', fileId: 'f', comment: { anchor: '0:0', text: 'x' }, reviewRevision: 'v1' });
-    return reducer(store, { type: 'finalize', sessionId: 's', decision: 'corrections-requested', reviewRevision: 'v1' });
-  };
-  const after = (action) => reducer(finalized(), { sessionId: 's', reviewRevision: 'v1', ...action }).s;
-  assert.equal(finalized().s.sessionDecision, 'corrections-requested');
-  assert.equal(after({ type: 'remove-line-comment', fileId: 'f', anchor: '0:0' }).sessionDecision, undefined);
-  assert.equal(after({ type: 'set-line-comment', fileId: 'f', comment: { anchor: '0:1', text: 'y' } }).sessionDecision, undefined);
-  assert.equal(after({ type: 'set-files', fileIds: ['f'], state: 'approved' }).sessionDecision, undefined);
-  assert.equal(after({ type: 'set-finding-state', findingId: 'x', state: 'dismissed' }).sessionDecision, undefined);
-  assert.equal(after({ type: 'reject-category', dimension: 'security', fileIds: ['f'] }).sessionDecision, undefined);
-  assert.equal(after({ type: 'clear-category', dimension: 'security', fileIds: ['f'] }).sessionDecision, undefined);
-  const noted = after({ type: 'set-note', key: '__draft', note: 'edited' });
-  assert.equal(noted.sessionDecision, 'corrections-requested');
-  assert.equal(noted.correctionNotes.__draft, 'edited');
-});
-
-test('displayed status shows "in review" once a saved verdict applies to this transcript', () => {
-  const session = { sessionId: 's', status: 'needs-review', contentHash: 'h' };
-  assert.equal(effectiveStatus(session), 'needs-review');
-  const touched = { ...emptyState('s'), reviewRevision: 'r', contentHash: 'h', fileStates: { a: 'approved' } };
-  assert.equal(effectiveStatus(session, touched), 'in-review');
-  assert.equal(effectiveStatus(session, { ...touched, contentHash: 'old' }), 'needs-review');
-  assert.equal(effectiveStatus(session, { ...touched, fileStates: { a: 'pending' } }), 'needs-review');
-  assert.equal(effectiveStatus(session, { ...touched, sessionDecision: 'rejected' }), 'rejected');
-});
-
-const triageFile = (id, extra = {}) => ({ id, path: `${id}.ts`, areaId: 'misc', riskFlags: [], ...extra });
-const triageSession = (files, findings = []) => ({
-  files,
-  findings,
-  systemAreas: [
-    { id: 'misc', label: 'Misc', critical: false },
-    { id: 'auth', label: 'Auth', critical: true },
-  ],
-});
-
-test('fileWeight adds risk flags, critical area and the worst finding on the file', () => {
-  const file = triageFile('a', { areaId: 'auth', riskFlags: ['security', 'database'] });
-  const session = triageSession([file], [
-    { id: 'f1', filePath: 'a.ts', severity: 'medium', kind: 'issue' },
-    { id: 'f2', filePath: 'a.ts', severity: 'high', kind: 'issue' },
-    { id: 'f3', filePath: 'other.ts', severity: 'critical', kind: 'issue' },
+test('word diff: every changed token is marked, lines are paired by similarity, rewrites stay unmarked', () => {
+  const r = plain(I.pairRanges('const a = foo(1, 2);', 'const b = foo(1, 3);'));
+  assert.deepEqual(r.del, [{ start: 6, end: 7 }, { start: 17, end: 18 }]);
+  assert.deepEqual(r.add, [{ start: 6, end: 7 }, { start: 17, end: 18 }]);
+  assert.equal(I.pairRanges('return a;', 'throw new Error("unreachable")'), null);
+  assert.deepEqual(plain(I.alignRun(['a = 1', 'b = 2'], ['x()', 'a = 10', 'b = 20'])), [
+    { del: null, add: 0, match: false },
+    { del: 0, add: 1, match: true },
+    { del: 1, add: 2, match: true },
   ]);
-  const w = fileWeight(file, session);
-  assert.equal(w.riskFlags, 2);
-  assert.equal(w.criticalArea, true);
-  assert.equal(w.findingSeverity, 2);
-  assert.equal(w.total, 6);
-  assert.equal(fileWeight(triageFile('plain'), session).total, 1);
+  const ranges = I.changedRanges(hunk('h', [line('del', 'a = 1', 1), line('add', 'x()', 1), line('add', 'a = 10', 2)]));
+  assert.deepEqual(plain([...ranges.keys()]), [0, 2], 'the edited line pairs with its new version, not with the inserted one');
 });
 
-test('needsAttention flags risk, medium+ findings, critical areas and unverified files only', () => {
-  const session = triageSession([], [
-    { id: 'm', filePath: 'medium.ts', severity: 'medium', kind: 'issue' },
-    { id: 'l', filePath: 'low.ts', severity: 'low', kind: 'issue' },
+test('previous round comments: open while their code is untouched, changed once it moved on', () => {
+  const live = file('a.ts', [hunk('h1', [line('add', 'x', 1)])]);
+  const mk = (id, hunkId, resolved) => ({ id, path: 'a.ts', hunkId, li: 0, kind: 'add', lineText: 'x', text: 't', at: AT, resolved });
+  const s = { ...emptyState(), rounds: [{ index: 1, at: AT, text: '', files: {}, comments: [mk('a', 'h1'), mk('b', 'gone'), mk('c', 'gone', true)], notes: {} }] };
+  assert.deepEqual(plain(R.previousRoundItems(review([live]), s).map((i) => i.status)), ['open', 'changed', 'resolved']);
+  const resolved = R.setRoundCommentResolved(s, 'a', true);
+  assert.equal(resolved.rounds[0].comments[0].resolved, true);
+});
+
+test('one reading order: what needs a closer look (weightiest first), the routine rest, generated files last', () => {
+  const plainFile = file('b.ts', [hunk('h1', [line('add', 'x', 1)])]);
+  const risky = file('a.ts', [hunk('h2', [line('add', 'y', 1)])], { riskFlags: ['security'] });
+  const riskier = file('c.ts', [hunk('h3', [line('add', 'z', 1)])], { riskFlags: ['security', 'database'] });
+  const lock = file('package-lock.json', [hunk('h4', [line('add', '{', 1)])], { generated: 'lockfile' });
+  const groups = R.groupFiles([plainFile, risky, lock, riskier], review([plainFile, risky, lock, riskier]));
+  assert.deepEqual(plain(groups.map((g) => [g.key, g.files.map((f) => f.path)])), [
+    ['attention', ['c.ts', 'a.ts']],
+    ['routine', ['b.ts']],
+    ['generated', ['package-lock.json']],
   ]);
-  const none = new Set();
-  assert.equal(needsAttention(triageFile('plain'), session, none), false);
-  assert.equal(needsAttention(triageFile('low'), session, none), false);
-  assert.equal(needsAttention(triageFile('medium'), session, none), true);
-  assert.equal(needsAttention(triageFile('flagged', { riskFlags: ['performance'] }), session, none), true);
-  assert.equal(needsAttention(triageFile('crit', { areaId: 'auth' }), session, none), true);
-  assert.equal(needsAttention(triageFile('plain'), session, new Set(['plain'])), true);
+  assert.deepEqual(plain(R.attentionReasons(risky, review([risky]))), ['touches security']);
 });
 
-test('groupFiles orders risk groups by weight and puts critical areas first', () => {
-  const files = [
-    triageFile('routine'),
-    triageFile('one', { riskFlags: ['security'] }),
-    triageFile('three', { areaId: 'auth', riskFlags: ['security', 'database'] }),
-    triageFile('nested', { path: 'dir/nested.ts' }),
-  ];
-  const session = triageSession(files);
-  const risk = groupFiles(files, session, 'risk', new Set());
-  assert.deepEqual(keys(risk), ['attention', 'routine']);
-  assert.deepEqual(ids(risk[0].files), ['three', 'one']);
-  assert.deepEqual(ids(risk[1].files), ['routine', 'nested']);
+test('a comment asks for a change; removing the last one takes that back', () => {
+  const f = file('a.ts', [hunk('h1', [line('add', 'x', 1), line('add', 'y', 2)]), hunk('h2', [line('add', 'z', 9)])]);
+  const c = (id, li) => ({ id, path: 'a.ts', hunkId: 'h1', li, kind: 'add', lineText: li ? 'y' : 'x', line: li + 1, text: 't', at: AT });
+  let s = R.commentOnHunk(emptyState(), c('c1', 0), AT);
+  assert.equal(s.hunks.h1.verdict, 'changes');
+  s = R.commentOnHunk(s, c('c2', 1), AT);
+  s = R.uncommentHunk(s, 'c1');
+  assert.equal(s.hunks.h1.verdict, 'changes', 'another comment still asks');
+  s = R.uncommentHunk(s, 'c2');
+  assert.equal(s.hunks.h1, undefined);
+  const approved = R.setHunkVerdict(emptyState(), f, 'h2', 'approved', AT);
+  const commented = R.commentOnHunk(approved, { ...c('c3', 0), hunkId: 'h2' }, AT);
+  assert.equal(commented.hunks.h2.verdict, 'approved', 'a decided change keeps its verdict');
+  assert.equal(R.uncommentHunk(commented, 'c3').hunks.h2.verdict, 'approved');
+});
 
-  const area = groupFiles(files, session, 'area', new Set());
-  assert.deepEqual(keys(area), ['area:auth', 'area:misc']);
-  assert.equal(area[0].meta, 'critical area');
-
-  const dir = groupFiles(files, session, 'dir', new Set());
-  assert.deepEqual(Array.from(dir, (g) => g.label), ['(root)', 'dir/']);
-  assert.deepEqual(ids(dir[0].files), ['routine', 'one', 'three']);
+test('needs attention: risk, real findings, untested edits, changes since review, unrecorded changes', () => {
+  const f = file('a.ts', [hunk('h1', [line('add', 'x', 1)], { kind: 'none', matched: 0, total: 1 })]);
+  assert.equal(R.needsAttention(f, review([f])), false, 'no sessions: nothing to compare with');
+  assert.equal(R.needsAttention(f, review([f], { sessions: [{ sessionId: 's' }] })), true);
+  assert.equal(R.needsAttention({ ...f, generated: 'lockfile' }, review([f], { sessions: [{ sessionId: 's' }] })), false);
+  const plainFile = file('b.ts', [hunk('h2', [line('add', 'y', 1)])]);
+  assert.equal(R.needsAttention({ ...plainFile, since: 'changed' }, review([plainFile])), true);
+  assert.equal(R.needsAttention(plainFile, review([plainFile], { findings: [{ id: 'f', severity: 'medium', filePath: 'b.ts' }] })), true);
 });
 
 test('sortFindings ranks by severity, then potential bugs, without mutating the input', () => {
@@ -167,8 +134,7 @@ test('sortFindings ranks by severity, then potential bugs, without mutating the 
     { id: 'high-issue', severity: 'high', kind: 'issue' },
     { id: 'high-bug', severity: 'high', kind: 'potential-bug' },
     { id: 'critical', severity: 'critical', kind: 'suggestion' },
-    { id: 'info', severity: 'info', kind: 'question-for-agent' },
   ];
-  assert.deepEqual(ids(sortFindings(findings)), ['critical', 'high-bug', 'high-issue', 'low', 'info']);
+  assert.deepEqual(plain(R.sortFindings(findings).map((f) => f.id)), ['critical', 'high-bug', 'high-issue', 'low']);
   assert.equal(findings[0].id, 'low');
 });

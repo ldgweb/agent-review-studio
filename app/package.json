@@ -1,7 +1,7 @@
 {
   "name": "agent-review-studio",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Local desktop workbench for reviewing changes made by coding agents.",
   "author": "Lucio (ldgweb)",
   "homepage": "https://github.com/ldgweb/agent-review-studio#readme",

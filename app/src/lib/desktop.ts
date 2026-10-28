@@ -19,10 +19,10 @@ export function closeWindow(): void {
   if (isDesktop()) void getCurrentWindow().close();
 }
 
-/** Open an external URL (a PR page, a vscode:///cursor:// deep link). The
- * WebView cannot open custom schemes itself — window.open dies silently —
- * so the desktop routes through the core's /open (OS default handler).
- * Rejects when the URL could not be opened; callers surface that. */
+/** Open an external URL: a web page, or an editor link (vscode://…). The
+ * WebView cannot open custom schemes itself (window.open fails silently),
+ * so the desktop asks the core's /open, which uses the system's handler.
+ * Rejects when the URL could not be opened; callers say so. */
 export async function openExternal(url: string): Promise<void> {
   if (!isDesktop()) {
     // noopener makes window.open return null, so there is no failure signal here
