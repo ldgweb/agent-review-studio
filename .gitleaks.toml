@@ -8,4 +8,4 @@ condition = "AND"
 # core/policy.rs is the old name of core/redact.rs; the history scan still sees it.
 paths = ['''app/src-tauri/src/(core/redact|core/policy|cli/render)\.rs$''']
 regexTarget = "secret"
-regexes = ['''^AKIAABCDEFGHIJKLMNOP$''', '''^abcd1234efgh5678ijkl$''']
+regexes = ['''^AKIAABCDEFGHIJKLMNOP$''', '''^abcd1234efgh5678ijkl$''', '''^abcdefgh12345$''']
