@@ -6,7 +6,11 @@
 //
 // The target is the one Tauri builds for (TAURI_ENV_TARGET_TRIPLE), else this
 // machine. A universal macOS build gets a universal ars: both architectures,
-// joined with lipo.
+// joined with lipo. On Linux the packages take ars straight from the build
+// (tauri.linux.conf.json has no externalBin), so staging it is harmless there.
+//
+// Cargo runs inside src-tauri, as Tauri runs it, so the toolchain pinned in
+// src-tauri/rust-toolchain.toml builds ars too.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,10 +25,10 @@ const profile = release ? 'release' : 'debug';
 /** Builds ars for one triple; returns where the binary is */
 function build(triple) {
   const cross = triple !== host;
-  const args = ['build', '--locked', '--bin', 'ars', '--manifest-path', 'src-tauri/Cargo.toml'];
+  const args = ['build', '--locked', '--bin', 'ars'];
   if (release) args.push('--release');
   if (cross) args.push('--target', triple);
-  execFileSync('cargo', args, { stdio: 'inherit' });
+  execFileSync('cargo', args, { stdio: 'inherit', cwd: 'src-tauri' });
   const built = cross ? join(targetDir, triple, profile, `ars${ext}`) : join(targetDir, profile, `ars${ext}`);
   if (statSync(built).size === 0) throw new Error(`${built} is empty`);
   return built;
