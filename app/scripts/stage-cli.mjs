@@ -42,6 +42,9 @@ if (target === 'universal-apple-darwin') {
   const universal = join(targetDir, target, profile);
   mkdirSync(universal, { recursive: true });
   execFileSync('lipo', ['-create', '-output', join(universal, 'ars'), ...parts], { stdio: 'inherit' });
+  // The app's ad-hoc signature covers every binary inside it: sign ars the
+  // same way first, or signing the app fails
+  execFileSync('codesign', ['--force', '--sign', '-', join(universal, 'ars')], { stdio: 'inherit' });
   copyFileSync(join(universal, 'ars'), staged);
 } else {
   copyFileSync(build(target), staged);
