@@ -63,6 +63,11 @@
 .topbar-desktop {
   padding-right: 0;
 }
+/* macOS: room for the system's window buttons on the left */
+.topbar-desktop.on-macos {
+  padding-left: 80px;
+  padding-right: var(--sp-3);
+}
 
 .win-controls {
   display: flex;

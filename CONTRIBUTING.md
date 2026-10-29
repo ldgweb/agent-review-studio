@@ -21,7 +21,7 @@ I'd like to keep the app small and focused on reviewing real agent work. A new v
 
 ## Releases
 
-Release tags must match the version in `app/package.json`, `app/src-tauri/Cargo.toml` and `app/src-tauri/tauri.conf.json`. The release workflow runs the checks again and creates a draft Windows release; I check the installer and the portable ZIP by hand before publishing it.
+Release tags must match the version everywhere it appears; `node scripts/check-version.mjs` (from `app/`) checks it. The release workflow runs the checks again and builds the Windows, macOS and Linux packages into a draft release, which I check by hand before publishing it. To try a packaging change before a release, add the **packaging** label to its pull request: CI then builds all the packages and keeps them as artifacts for a week.
 
 ## When an agent changes its transcript format
 

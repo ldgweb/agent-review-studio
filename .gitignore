@@ -19,3 +19,7 @@
 .claude/
 .aws/
 /audit-results/
+
+# Release packaging, made by CI
+/app/release-files/
+/app/release-portable/

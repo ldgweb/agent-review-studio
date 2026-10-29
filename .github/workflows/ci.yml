@@ -4,9 +4,12 @@
 # system webkit packages and matches the primary target.
 #
 # core-unix builds the Rust core and the ars CLI on Linux and macOS and runs
-# the same tests there (path case rules, git plumbing, fixtures). Windows is
-# still the only released platform; formatting, lints and audits are gated
-# once, on Windows.
+# the same tests there (path case rules, git plumbing, fixtures). Formatting,
+# lints and audits are gated once, on Windows.
+#
+# packages builds the release packages for all three systems, without
+# releasing them, on pull requests labelled "packaging": the way to try a
+# packaging change before tagging a version.
 #
 # Third-party actions are pinned to commit SHAs; Dependabot proposes updates.
 # The Rust toolchain comes from app/src-tauri/rust-toolchain.toml.
@@ -17,6 +20,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # labeled: adding the "packaging" label builds the packages
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
@@ -137,3 +142,61 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           ./gitleaks git --redact --verbose --config .gitleaks.toml .
+
+  packages:
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'packaging')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            bundles: nsis
+            target: ''
+          - os: macos-latest
+            platform: macos
+            bundles: app,dmg
+            target: universal-apple-darwin
+          - os: ubuntu-22.04
+            platform: linux
+            bundles: deb,rpm,appimage
+            target: ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Tauri system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential pkg-config patchelf file
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Install the pinned Rust toolchain
+        working-directory: app/src-tauri
+        run: |
+          rustup toolchain install
+          if [ "${{ matrix.platform }}" = macos ]; then rustup target add aarch64-apple-darwin x86_64-apple-darwin; fi
+
+      - name: Build the packages
+        run: |
+          npm ci
+          if [ -n "${{ matrix.target }}" ]; then target="--target ${{ matrix.target }}"; else target=""; fi
+          npm run tauri -- build --ci --bundles ${{ matrix.bundles }} $target -- --locked
+          node scripts/collect-release.mjs ${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-${{ matrix.platform }}
+          path: app/release-files/
+          retention-days: 7
