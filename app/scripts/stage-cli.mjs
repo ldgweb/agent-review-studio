@@ -6,8 +6,9 @@
 //
 // The target is the one Tauri builds for (TAURI_ENV_TARGET_TRIPLE), else this
 // machine. A universal macOS build gets a universal ars: both architectures,
-// joined with lipo. On Linux the packages take ars straight from the build
-// (tauri.linux.conf.json has no externalBin), so staging it is harmless there.
+// joined with lipo. On macOS and Linux the packages take ars straight from
+// the build folder (their tauri.<os>.conf.json drops externalBin), so a
+// universal ars also goes where Tauri puts its own universal binary.
 //
 // Cargo runs inside src-tauri, as Tauri runs it, so the toolchain pinned in
 // src-tauri/rust-toolchain.toml builds ars too.
@@ -38,7 +39,10 @@ mkdirSync('src-tauri/binaries', { recursive: true });
 const staged = `src-tauri/binaries/ars-${target}${ext}`;
 if (target === 'universal-apple-darwin') {
   const parts = ['aarch64-apple-darwin', 'x86_64-apple-darwin'].map(build);
-  execFileSync('lipo', ['-create', '-output', staged, ...parts], { stdio: 'inherit' });
+  const universal = join(targetDir, target, profile);
+  mkdirSync(universal, { recursive: true });
+  execFileSync('lipo', ['-create', '-output', join(universal, 'ars'), ...parts], { stdio: 'inherit' });
+  copyFileSync(join(universal, 'ars'), staged);
 } else {
   copyFileSync(build(target), staged);
 }
