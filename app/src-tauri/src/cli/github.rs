@@ -1,5 +1,5 @@
 // GitHub posting for `ars pr --post`. Upserts one review-context comment per
-// PR via the REST API — no `gh` dependency. Token from GH_TOKEN /
+// PR through the REST API, without depending on `gh`. Token from GH_TOKEN /
 // GITHUB_TOKEN (GitHub Actions injects GITHUB_TOKEN).
 
 use crate::app_core::git::{github_slug, parse_owner_repo};
@@ -93,19 +93,19 @@ async fn resolve_pr_number(
 }
 
 /// owner/repo from `--repo`, else GITHUB_REPOSITORY, else the GitHub
-/// "origin" remote — each validated by the same parser as the desktop app.
+/// "origin" remote, each validated by the same parser as the desktop app.
 fn resolve_slug(
     repo_flag: Option<&str>,
     remote_url: Option<&str>,
 ) -> Result<(String, String), String> {
     if let Some(flag) = repo_flag {
         return parse_owner_repo(flag)
-            .ok_or_else(|| format!("Invalid --repo \"{flag}\" — expected <owner>/<name>."));
+            .ok_or_else(|| format!("Invalid --repo \"{flag}\": expected <owner>/<name>."));
     }
     if let Ok(env) = std::env::var("GITHUB_REPOSITORY") {
         if !env.is_empty() {
             return parse_owner_repo(&env).ok_or_else(|| {
-                format!("Invalid GITHUB_REPOSITORY \"{env}\" — expected <owner>/<name>.")
+                format!("Invalid GITHUB_REPOSITORY \"{env}\": expected <owner>/<name>.")
             });
         }
     }
@@ -128,7 +128,7 @@ pub async fn resolve_target(
         let token = token.ok_or(
             "No PR number given and no token to resolve one. Pass --pr <n> or set GH_TOKEN.",
         )?;
-        let branch = branch.ok_or("No branch to resolve a PR from — pass --pr <n>.")?;
+        let branch = branch.ok_or("No branch to find the PR from. Pass --pr <n>.")?;
         number = resolve_pr_number(token, &owner, &repo, branch).await?;
         if number.is_none() {
             return Err(format!("No open PR found for branch \"{branch}\" in {owner}/{repo}. Push the branch and open a PR, or pass --pr <n>."));
@@ -158,7 +158,7 @@ async fn author_login(token: &str) -> Option<String> {
 /// The marked comment body, cut (at a line break, on a char boundary) to
 /// fit GitHub's size limit, with a note when anything was dropped.
 pub fn comment_body(body: &str) -> String {
-    const NOTE: &str = "\n\n_… truncated to fit GitHub's comment size limit — run `ars review` locally for the full view._\n";
+    const NOTE: &str = "\n\n_… truncated to fit GitHub's comment size limit. Run `ars review` locally for the full view._\n";
     let full = format!("{ARS_MARKER}\n{body}");
     if full.len() <= MAX_COMMENT_BYTES {
         return full;

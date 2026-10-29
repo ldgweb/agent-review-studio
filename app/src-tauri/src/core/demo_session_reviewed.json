@@ -5,20 +5,67 @@
   "model": "demo-model",
   "projectName": "demo-shop",
   "branch": "fix/flaky-retries",
-  "prompt": "Our API client retries flaky requests immediately and hammers the backend. Add exponential backoff with a sensible cap, and document the behavior.\n\n(SAMPLE #2 — this one arrives ALREADY REVIEWED, so you can see what a finished review looks like: per-file verdicts, line comments, a corrections draft ready to copy. Open the decision bar and the rail, then archive both samples when done.)",
-  "outcome": "Added exponential backoff to the API client with a new retry helper. Docs updated. I capped retries at 5 attempts; backoff currently grows unbounded between attempts — flagged by the reviewer.",
+  "prompt": "Our API client retries flaky requests immediately and hammers the backend. Add exponential backoff with a sensible cap, and document the behavior.\n\n(SAMPLE #2, already reviewed once: you asked for a cap on the backoff, and the agent added it. “Since last review” shows only that fix. Your earlier verdicts on the untouched files still apply.)",
+  "outcome": "Added exponential backoff to the API client with a new retry helper. After your review, capped the delay at 30 s with full jitter, as the docs promise.",
   "plan": [
     "Extract retry logic into src/api/retry.ts",
     "Use exponential backoff in the client",
     "Document the retry behavior"
   ],
-  "stats": { "filesAnalyzed": 6, "commandsRun": 4, "testsRun": 12, "testsFailed": 0, "durationMinutes": 11 },
+  "stats": {
+    "filesAnalyzed": 6,
+    "commandsRun": 4,
+    "testsRun": 12,
+    "testsFailed": 0,
+    "durationMinutes": 11
+  },
   "timeline": [
-    { "time": "2026-07-19T15:04:00Z", "kind": "plan", "title": "Declared the 3-step plan" },
-    { "time": "2026-07-19T15:05:30Z", "kind": "file-edit", "title": "Created the retry helper", "filePath": "src/api/retry.ts" },
-    { "time": "2026-07-19T15:08:10Z", "kind": "file-edit", "title": "Wired backoff into the client", "filePath": "src/api/client.ts" },
-    { "time": "2026-07-19T15:10:00Z", "kind": "test-run", "title": "npm test — all green", "command": "npm test", "exitCode": 0, "detail": "12 passed." },
-    { "time": "2026-07-19T15:11:20Z", "kind": "file-edit", "title": "Documented the retry behavior", "filePath": "docs/api.md" }
+    {
+      "time": "2026-07-19T15:04:00Z",
+      "kind": "plan",
+      "title": "Declared the 3-step plan"
+    },
+    {
+      "time": "2026-07-19T15:05:30Z",
+      "kind": "file-edit",
+      "title": "Created the retry helper",
+      "filePath": "src/api/retry.ts"
+    },
+    {
+      "time": "2026-07-19T15:08:10Z",
+      "kind": "file-edit",
+      "title": "Wired backoff into the client",
+      "filePath": "src/api/client.ts"
+    },
+    {
+      "time": "2026-07-19T15:10:00Z",
+      "kind": "test-run",
+      "title": "npm test: all green",
+      "command": "npm test",
+      "exitCode": 0,
+      "detail": "12 passed."
+    },
+    {
+      "time": "2026-07-19T15:11:20Z",
+      "kind": "file-edit",
+      "title": "Documented the retry behavior",
+      "filePath": "docs/api.md"
+    },
+    {
+      "time": "2026-07-20T08:40:00Z",
+      "kind": "file-edit",
+      "title": "Capped the backoff at 30 s, with full jitter",
+      "detail": "Your review asked for a cap: the docs promise at most 30 s between attempts, and jitter keeps clients from retrying in lockstep.",
+      "filePath": "src/api/retry.ts"
+    },
+    {
+      "time": "2026-07-20T08:41:30Z",
+      "kind": "test-run",
+      "title": "npm test: all green",
+      "command": "npm test",
+      "exitCode": 0,
+      "detail": "14 passed."
+    }
   ],
   "files": [
     {
@@ -28,7 +75,7 @@
     {
       "path": "src/api/retry.ts",
       "created": true,
-      "diff": "@@ -0,0 +1,12 @@\n+export interface RetryOptions {\n+  attempts: number;\n+  baseDelayMs: number;\n+}\n+\n+export async function withRetry(run: () => Promise<Response>, opts: RetryOptions): Promise<Response> {\n+  for (let i = 0; i < opts.attempts; i++) {\n+    const res = await run().catch(() => null);\n+    if (res && res.ok) return res;\n+    await sleep(opts.baseDelayMs * 2 ** i);\n+  }\n+  throw new Error('request failed after retries');"
+      "diff": "@@ -0,0 +1,18 @@\n+export interface RetryOptions {\n+  attempts: number;\n+  baseDelayMs: number;\n+}\n+\n+/** The docs promise at most 30 s between attempts. */\n+const MAX_DELAY_MS = 30_000;\n+\n+export async function withRetry(run: () => Promise<Response>, opts: RetryOptions): Promise<Response> {\n+  for (let i = 0; i < opts.attempts; i++) {\n+    const res = await run().catch(() => null);\n+    if (res && res.ok) return res;\n+    const backoff = Math.min(MAX_DELAY_MS, opts.baseDelayMs * 2 ** i);\n+    // Full jitter: clients that failed together do not retry in lockstep.\n+    await sleep(Math.random() * backoff);\n+  }\n+  throw new Error('request failed after retries');\n+}"
     },
     {
       "path": "docs/api.md",

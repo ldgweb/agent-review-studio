@@ -1,4 +1,4 @@
-// Adapter layer — each adapter knows one agent's native on-disk format and
+// Adapter layer: each adapter knows one agent's native on-disk format and
 // produces normalized AgentSessions. Product semantics (risk, findings,
 // warnings) live in the normalizer, not here.
 
@@ -15,7 +15,7 @@ use super::domain::AgentSession;
 use serde::Serialize;
 use std::collections::HashMap;
 
-/// Health/status of one ingestion source, shown in the inbox
+/// Health/status of one ingestion source, shown in Settings → Session sources
 #[derive(Debug, Clone, Serialize)]
 pub struct AdapterStatus {
     pub id: String,
@@ -51,6 +51,18 @@ pub trait SessionAdapter {
     fn id(&self) -> &'static str;
     fn label(&self) -> &'static str;
     fn collect(&self, config: &AdapterConfig, max_sessions: usize) -> CollectResult;
+
+    /// The newest sessions of one project (`root`, a Git work tree root),
+    /// found without a full scan when the source allows it. None: the source
+    /// cannot, and the caller uses the scanner's index instead.
+    fn project_sessions(
+        &self,
+        _config: &AdapterConfig,
+        _root: &str,
+        _limit: usize,
+    ) -> Option<Vec<AgentSession>> {
+        None
+    }
 
     /// What to watch for near-real-time pickup. Default: everything the
     /// config names, recursively. Adapters whose sources are too noisy to
@@ -91,6 +103,28 @@ pub trait SessionAdapter {
     }
 }
 
+/// `project_sessions` for small sources: their normal (cached) collect, kept
+/// to the project.
+pub fn collect_for_project(
+    adapter: &dyn SessionAdapter,
+    config: &AdapterConfig,
+    root: &str,
+    limit: usize,
+) -> Vec<AgentSession> {
+    let mut out: Vec<AgentSession> = adapter
+        .collect(config, 60)
+        .sessions
+        .into_iter()
+        .filter(|s| {
+            s.project_path
+                .as_deref()
+                .is_some_and(|p| super::paths::is_within(p, root))
+        })
+        .collect();
+    out.truncate(limit);
+    out
+}
+
 /// Per-file mtime cache shared by the file-scanning adapters (parse only what
 /// changed between scans).
 #[derive(Default)]
@@ -110,7 +144,7 @@ impl ParseCache {
         self.entries.insert(path, (mtime_ms, session));
     }
 
-    /// Drop entries for files no longer on disk — without this the cache
+    /// Drop entries for files no longer on disk: without this the cache
     /// grows monotonically across the process lifetime.
     pub fn retain_paths(&mut self, seen: &std::collections::HashSet<String>) {
         self.entries.retain(|path, _| seen.contains(path));

@@ -1,18 +1,10 @@
 // ---------------------------------------------------------------------------
-// Agent Review Studio — domain model
-// The primary entity is the AgentSession: the full lifecycle of an AI coding
-// agent working on a task (prompt → plan → actions → decisions → outcome).
+// Types shared across the app: agents, diff lines, what an agent did (its
+// timeline), the hints of the fixed checks and the review checks behind
+// them. The project review itself is in types/review.ts.
 // ---------------------------------------------------------------------------
 
 export type AgentName = 'claude-code' | 'codex' | 'cursor' | 'copilot' | 'aider' | 'gemini-cli' | 'custom';
-
-export type SessionStatus =
-  | 'needs-review'
-  | 'in-review'
-  | 'approved'
-  | 'partially-approved'
-  | 'corrections-requested'
-  | 'rejected';
 
 export type RiskDimension = 'security' | 'database' | 'performance' | 'maintainability';
 
@@ -38,28 +30,6 @@ export interface DiffLine {
 export interface DiffHunk {
   header: string;
   lines: DiffLine[];
-}
-
-export interface FileChange {
-  id: string;
-  path: string;
-  changeType: 'created' | 'modified' | 'deleted';
-  language: string;
-  linesAdded: number;
-  linesRemoved: number;
-  /** FK → SystemArea */
-  areaId: string;
-  riskFlags: RiskDimension[];
-  /** What changed, in one sentence */
-  summary: string;
-  /** Diff hunks for this file (may be truncated) */
-  hunks: DiffHunk[];
-  /** Where the hunks come from: the live repo or the reconstructed transcript.
-   * Set at serve time by the git enrichment — never persisted, never hashed. */
-  diffSource?: 'transcript' | 'git';
-  /** Transcript changed the file but the working tree shows nothing:
-   * 'committed' after the session, or 'missing' (reverted / overwritten) */
-  drift?: 'committed' | 'missing';
 }
 
 export type TimelineEventKind =
@@ -89,9 +59,9 @@ export interface TimelineEvent {
 export type FindingKind = 'issue' | 'suggestion' | 'question-for-agent' | 'potential-bug';
 export type FindingSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical';
 
-/** A line-anchored finding. No LLM involved: 'local' = the built-in checks
- * computed in normalize (hardcoded secrets, leftover debug, oversized files,
- * shrunk tests); 'custom' = the user's rules from Settings → Review
+/** A hint at a line, from fixed checks (no AI involved). 'local': the
+ * built-in checks (a hardcoded secret, leftover debug code, a very large
+ * change, a test that shrank). 'custom': your rules from Settings → Review
  * checks and the repo's .ars/rules.json. */
 export interface ReviewerFinding {
   id: string;
@@ -144,96 +114,21 @@ export interface SessionStats {
   durationMinutes: number;
 }
 
-export interface SessionSummary {
-  text: string;
-  impactedAreas: string[];
-  riskWarnings: string[];
-}
-
-/** THE primary entity */
-export interface AgentSession {
-  sessionId: string;
-  /** Fingerprint of the transcript, HEAD and current session files. */
-  reviewRevision?: string;
-  contentHash?: string;
-  /** 'live' = ingested from a real agent transcript */
-  source?: 'live';
-  timestamp: string;
-  agent: AgentName;
-  agentLabel: string;
-  model: string;
-  projectName: string;
-  /** Absolute path of the project the agent worked in, when the source reveals it */
-  projectPath?: string;
-  branch: string;
-  originalPrompt: string;
-  declaredGoal: string;
-  /** Ordered plan steps declared by the agent before acting */
-  initialPlan: string[];
-  status: SessionStatus;
-  /** Agent's final self-report */
-  outcome: string;
-  stats: SessionStats;
-  summary: SessionSummary;
-  systemAreas: SystemArea[];
-  files: FileChange[];
-  timeline: TimelineEvent[];
-  risks: RiskScore[];
-  findings: ReviewerFinding[];
-  /** Hidden from the default inbox; set from the archive action (server-persisted) */
-  archived?: boolean;
-  /** projectPath is a git work tree — commit/revert actions are available.
-   * Set at serve time by the git enrichment. */
-  gitRepo?: boolean;
-  /** Governance from the repo's .ars/policy.json, attached at serve time */
-  policy?: ArsPolicy;
-}
-
-/** Repo policy (.ars/policy.json) — committed, shared repo governance */
-export interface ArsPolicy {
-  /** Block an approving finalize when a risk score meets its threshold */
-  blockFinalizeAboveRisk?: Partial<Record<RiskDimension, number>>;
-  /** Set by the loader when the file exists but does not parse */
-  error?: string;
-}
-
 // ---------------------------------------------------------------------------
-// Mutable client state (approval store: saved via the core's /approvals, cached in localStorage)
+// What the diff viewer knows of a comment (the stored one is in
+// types/review.ts)
 // ---------------------------------------------------------------------------
-
-export type FileApproval = 'pending' | 'approved' | 'rejected' | 'correction-requested';
-
-export type SessionDecision =
-  | 'approved'
-  | 'partially-approved'
-  | 'corrections-requested'
-  | 'rejected';
 
 /** A reviewer comment anchored to a diff line */
 export interface LineComment {
-  /** stable anchor within the file's rendered diff: "<hunkIndex>:<lineIndex>" */
+  /** Where it sits in the file's diff: "<hunkIndex>:<lineIndex>" */
   anchor: string;
-  /** display line number (new side when available) */
+  /** The line's number now (the new side when it has one) */
   line?: number;
   text: string;
+  /** Replacement code for the line ('' removes it) */
+  suggestion?: string;
 }
 
-/** Human stance on a finding; 'correction' feeds the correction draft */
+/** What you decided on a hint; 'correction' puts it in the review for the agent */
 export type FindingReviewState = 'accepted' | 'dismissed' | 'correction';
-
-export interface ApprovalState {
-  sessionId: string;
-  reviewRevision?: string;
-  contentHash?: string;
-  /** fileId → state */
-  fileStates: Record<string, FileApproval>;
-  /** fileId or findingId → note for the correction request */
-  correctionNotes: Record<string, string>;
-  /** fileId → comments left on specific diff lines */
-  lineComments: Record<string, LineComment[]>;
-  /** findingId → human stance on the finding */
-  findingStates: Record<string, FindingReviewState>;
-  /** e.g. "reject all database changes" */
-  rejectedCategories: RiskDimension[];
-  sessionDecision?: SessionDecision;
-}

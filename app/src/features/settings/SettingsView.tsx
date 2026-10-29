@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react';
 import { apiFetch, errorMessage } from '../../lib/api';
 import { useSessions } from '../../state/sessionsStore';
-import { useClearDecisions } from '../../state/approvalStore';
 import type { FindingKind, FindingRule, FindingSeverity } from '../../types/domain';
 import { SeverityPill } from '../../components/ui';
-import { useSampleTour } from '../inbox/useSampleTour';
+import { useSampleTour } from '../home/useSampleTour';
 
 // Sources and review checks have a Save action; data operations act immediately.
 type SettingsSection = 'sources' | 'checks' | 'data';
 
 const SECTIONS: Array<{ key: SettingsSection; label: string; desc: string }> = [
   { key: 'sources', label: 'Session sources', desc: 'Where sessions come from' },
-  { key: 'checks', label: 'Review checks', desc: 'Built-in and custom findings' },
+  { key: 'checks', label: 'Review checks', desc: 'Built-in and custom hints' },
   { key: 'data', label: 'Data', desc: 'What lives on this machine' },
 ];
 
@@ -42,13 +41,13 @@ function clampMaxSessions(raw: string, fallback: number): number {
   return Math.max(MAX_SESSIONS_MIN, Math.min(MAX_SESSIONS_MAX, Math.round(n)));
 }
 
-// The always-on checks the normalizer runs — shown so users see the whole
-// checklist their reviews rest on, not just their own additions.
+// The built-in checks, always on. Listed so you see every check your
+// reviews rest on, not only your own.
 const BUILT_IN_CHECKS: Array<{ label: string; desc: string; severity: FindingSeverity }> = [
   { label: 'Hardcoded secret', desc: 'API keys, tokens and passwords appearing in added lines', severity: 'high' },
   { label: 'Leftover debug / TODO', desc: 'console.log/debug, debugger, println!/dbg!, TODO/FIXME/XXX/HACK in added lines', severity: 'low' },
   { label: 'Oversized change', desc: 'A single file gaining more than 400 lines', severity: 'low' },
-  { label: 'Shrunk test file', desc: 'A test file that lost more lines than it gained — coverage may have been deleted', severity: 'medium' },
+  { label: 'Shrunk test file', desc: 'A test file that lost more lines than it gained: tests may have been deleted', severity: 'medium' },
 ];
 
 const SEVERITY_OPTIONS: FindingSeverity[] = ['info', 'low', 'medium', 'high', 'critical'];
@@ -61,8 +60,9 @@ const KIND_OPTIONS: Array<{ value: FindingKind; label: string }> = [
 
 type TesterVerdict = { kind: 'match' } | { kind: 'no-match' } | { kind: 'invalid'; error: string };
 
-/** Live rule tester — type a sample, see the rule fire before saving it. The
- * core evaluates it with the same regex engine the scan uses (Rust syntax). */
+/** Live rule tester: type a sample and see whether the rule matches, before
+ * saving it. The core runs it with the same regex engine as the checks
+ * (Rust syntax). */
 function RuleTester({ pattern, target }: { pattern: string; target: FindingRule['target'] }) {
   const [sample, setSample] = useState('');
   const [verdict, setVerdict] = useState<TesterVerdict | null>(null);
@@ -116,8 +116,8 @@ function RuleTester({ pattern, target }: { pattern: string; target: FindingRule[
   );
 }
 
-/** One custom rule — header (on/off · name · what it files · delete), then
- * what to match, then the live tester. */
+/** One custom rule: a header (on/off, name, what it reports, delete), what
+ * to match, then the live tester. */
 function RuleCard({
   rule,
   onChange,
@@ -146,8 +146,8 @@ function RuleCard({
         <select
           className="settings-input"
           style={{ width: 104, flexShrink: 0 }}
-          title="Severity of the finding"
-          aria-label="Severity of the finding"
+          title="Severity of the hint"
+          aria-label="Severity of the hint"
           value={rule.severity}
           onChange={(e) => onChange({ severity: e.target.value as FindingSeverity })}
         >
@@ -158,8 +158,8 @@ function RuleCard({
         <select
           className="settings-input"
           style={{ width: 150, flexShrink: 0 }}
-          title="How the finding is categorized"
-          aria-label="Finding kind"
+          title="What kind of hint it is"
+          aria-label="Kind of hint"
           value={rule.kind}
           onChange={(e) => onChange({ kind: e.target.value as FindingKind })}
         >
@@ -206,8 +206,8 @@ function RuleCard({
       <input
         className="settings-input mt-2"
         style={{ width: '100%' }}
-        aria-label="Message shown on the finding"
-        placeholder="Message shown on the finding (optional — defaults to the matched text)"
+        aria-label="Message shown on the hint"
+        placeholder="Message shown on the hint (optional; the matched text otherwise)"
         value={rule.message ?? ''}
         onChange={(e) => onChange({ message: e.target.value })}
       />
@@ -225,7 +225,7 @@ const ADAPTER_META: Record<string, { label: string; desc: string; dirLabel?: str
   copilot: { label: 'VS Code Copilot', desc: 'Copilot Chat sessions from workspaceStorage, zero-config', dirLabel: 'workspaceStorage folder' },
   aider: { label: 'Aider', desc: 'Chat history inside each project', listKey: 'projectDirs', listLabel: 'Project folders, one per line' },
   'gemini-cli': { label: 'Gemini CLI', desc: 'Saved chats and checkpoints (/chat save, --checkpointing)', dirLabel: 'Gemini tmp folder' },
-  custom: { label: 'Custom agents', desc: 'Open ars/v1 JSON format — any agent or CI', listKey: 'dirs', listLabel: 'Watched folders, one per line' },
+  custom: { label: 'Custom agents', desc: 'Open ars/v1 JSON format, for any agent or CI', listKey: 'dirs', listLabel: 'Watched folders, one per line' },
 };
 
 function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
@@ -240,7 +240,6 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 
 export function SettingsView() {
   const { refresh, sources } = useSessions();
-  const resetDecisions = useClearDecisions();
   const tour = useSampleTour();
   const [section, setSection] = useState<SettingsSection>('sources');
   const [settings, setSettings] = useState<SettingsPayload | null>(null);
@@ -262,18 +261,16 @@ export function SettingsView() {
   const clearDecisions = () => {
     const ok = window.confirm(
       'Clear every review decision on this machine?\n' +
-        'Approvals, rejections, comments, notes and finalized outcomes are removed. This cannot be undone.',
+        'Verdicts, comments, notes and the copied reviews of every project are removed. This cannot be undone.',
     );
     if (!ok) return;
     setClearState({ status: 'clearing' });
-    void resetDecisions().then((r) => {
-      if (r.ok) {
+    apiFetch('/api/review/clear', { method: 'POST', body: {} })
+      .then(() => {
         setClearState({ status: 'cleared' });
         setTimeout(() => setClearState((c) => (c.status === 'cleared' ? { status: 'idle' } : c)), 2500);
-      } else {
-        setClearState({ status: 'failed', error: r.error });
-      }
-    });
+      })
+      .catch((e: unknown) => setClearState({ status: 'failed', error: errorMessage(e) }));
   };
 
   const commitMaxSessions = () => {
@@ -450,8 +447,8 @@ export function SettingsView() {
             <div className="settings-section">
               <div className="settings-title">Review checks</div>
               <div className="settings-sub">
-                The deterministic checks every session is scanned with — no LLM; checks run locally. Add
-                your own: flag any pattern you care about, line by line, with a severity you choose.
+                The fixed checks ARS runs on every review: no AI, all on your machine. Add your own to flag any
+                pattern you care about, line by line, with the severity you choose.
               </div>
 
               <div className="section-label mt-3">Built-in · always on</div>
@@ -485,7 +482,7 @@ export function SettingsView() {
 
               <div className="faint mt-3" style={{ fontSize: 'var(--fs-xs)' }}>
                 Rust regex syntax (no lookaround). Repository checks live in a committed{' '}
-                <span className="mono">.ars/rules.json</span> — everyone who reviews that repo sees them.
+                <span className="mono">.ars/rules.json</span>: everyone who reviews that repository sees them.
               </div>
             </div>
           )}
@@ -493,11 +490,13 @@ export function SettingsView() {
           {section === 'data' && (
             <div className="settings-section">
               <div className="settings-title">Data</div>
-              <div className="settings-sub">Local data lives in <span className="mono">~/.agent-review-studio/</span> — sessions, decisions, config.</div>
+              <div className="settings-sub">
+                Local data lives in <span className="mono">~/.agent-review-studio/</span>: sessions, decisions, settings.
+              </div>
               <div className="settings-row">
                 <div>
                   <div className="row-label">Clear review decisions</div>
-                  <div className="row-desc">Removes all review decisions, line comments, notes and finalized outcomes stored on this machine.</div>
+                  <div className="row-desc">Removes every decision, comment, note and copied review stored on this machine.</div>
                 </div>
                 <button className="btn btn-danger btn-sm" disabled={clearState.status === 'clearing'} onClick={clearDecisions}>
                   {clearState.status === 'clearing' ? 'Clearing…' : clearState.status === 'cleared' ? '✓ Cleared' : 'Clear…'}

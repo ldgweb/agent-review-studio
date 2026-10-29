@@ -53,9 +53,43 @@ pub fn strip_root<'a>(path: &'a str, root: &str) -> Option<&'a str> {
     path[root.len()..].strip_prefix('/')
 }
 
+/// Whether `path` is `root` or lies inside it. Either separator is accepted
+/// and trailing slashes are ignored; case follows the platform rule.
+pub fn is_within(path: &str, root: &str) -> bool {
+    let key = |p: &str| fold_case(p.replace('\\', "/").trim_end_matches('/')).into_owned();
+    let (path, root) = (key(path), key(root));
+    !root.is_empty() && (path == root || path.starts_with(&format!("{root}/")))
+}
+
+/// A path as Windows tools take it, without the verbatim prefix that
+/// `canonicalize` adds: `\\?\C:\x` becomes `C:\x`, `\\?\UNC\host\share`
+/// becomes `\\host\share`. Other paths are returned unchanged.
+pub fn plain(path: &str) -> String {
+    match path.strip_prefix(r"\\?\UNC\") {
+        Some(share) => format!(r"\\{share}"),
+        None => path.strip_prefix(r"\\?\").unwrap_or(path).to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_drops_the_verbatim_prefix() {
+        assert_eq!(plain(r"\\?\C:\dev\app"), r"C:\dev\app");
+        assert_eq!(plain(r"\\?\UNC\host\share\app"), r"\\host\share\app");
+        assert_eq!(plain("/home/a/app"), "/home/a/app");
+    }
+
+    #[test]
+    fn within_normalizes_separators_and_trailing_slashes() {
+        assert!(is_within("C:\\dev\\app\\", "C:/dev/app"));
+        assert!(is_within("/home/a/app/src", "/home/a/app/"));
+        assert!(!is_within("/home/a/app2", "/home/a/app"));
+        assert!(!is_within("/home/a", "/home/a/app"));
+        assert!(!is_within("/home/a/app", "/"));
+    }
 
     #[test]
     fn exact_matches_hold_everywhere() {
@@ -87,6 +121,7 @@ mod tests {
         assert_eq!(fold_case("/Users/a/Café"), "/users/a/café");
         // Full Unicode folding for keys, as the persisted ids were built.
         assert_eq!(fold_case("C:/ÉTÉ"), fold_case("c:/été"));
+        assert!(is_within("C:/Dev/App/src", "c:\\dev\\app"));
     }
 
     #[cfg(not(any(windows, target_os = "macos")))]
@@ -96,5 +131,6 @@ mod tests {
         assert_eq!(strip_root("/home/a/App/a.ts", "/home/a/app"), None);
         assert_eq!(fold_case("/home/a/App"), "/home/a/App");
         assert_ne!(fold_case("/home/a/App"), fold_case("/home/a/app"));
+        assert!(!is_within("/home/a/App", "/home/a/app"));
     }
 }

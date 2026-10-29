@@ -23,9 +23,9 @@ pub struct AdapterConfigFile {
 pub struct AppConfig {
     pub max_sessions: usize,
     pub adapters: BTreeMap<String, AdapterConfigFile>,
-    /// Custom review checks (Settings → Review checks). Kept as raw JSON —
-    /// rules::parse_rules validates at scan time, so a hand-edited config
-    /// with an unknown field never fails to load.
+    /// Custom review checks (Settings → Review checks). Kept as raw JSON:
+    /// rules::parse_rules validates them when they run, so a hand-edited
+    /// config with an unknown field never fails to load.
     #[serde(default)]
     pub finding_rules: Vec<Value>,
 }
@@ -174,7 +174,7 @@ pub fn defaults() -> AppConfig {
 
 /// The config file merged over the defaults. Ok(None) when there is no file
 /// yet; Err (naming the file) when it exists but cannot be read or is not a
-/// JSON object — callers must not overwrite such a file.
+/// JSON object. Callers must not overwrite such a file.
 fn read_config_file() -> Result<Option<AppConfig>, String> {
     read_config_at(&config_path())
 }

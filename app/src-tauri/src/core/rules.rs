@@ -1,19 +1,21 @@
-// Custom review checks — user-defined rules evaluated at scan time, on top
-// of the built-in local findings the normalizer emits.
+// Custom review checks: user-defined rules that run on every project review
+// (core/review/assess.rs) and on each scanned session, next to the built-in
+// line checks.
 //
-// Two scopes, merged per session:
+// Two scopes, merged:
 //   - global rules from ~/.agent-review-studio/config.json (`findingRules`),
 //     edited in Settings → Review checks;
-//   - repo rules from <project>/.ars/rules.json (`{ "rules": [...] }`) —
+//   - repo rules from <project>/.ars/rules.json (`{ "rules": [...] }`),
 //     committed with the repository.
 //
 // A rule matches either the ADDED LINES of a file's diff (line-anchored
 // finding) or the file PATH (file-level finding). Patterns are Rust regex
-// (no lookaround). Invalid or disabled rules are skipped silently — a broken
-// custom rule must never break the scan. Findings land in session.findings
-// with source "custom" and are part of session_hash.
+// (no lookaround). Invalid or disabled rules are skipped silently: a broken
+// custom rule must never break a review or a scan. Findings carry source
+// "custom". In a session they land in session.findings, so they are part
+// of session_hash.
 
-use super::domain::{AgentSession, DiffLineKind};
+use super::domain::{AgentSession, DiffLineKind, FileChange};
 use super::normalize::truncate;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -22,8 +24,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 
-/// Findings one rule may emit per session — a runaway pattern (e.g. `.`)
-/// must not flood the review.
+/// Findings one rule may emit per review or session: a runaway pattern
+/// (e.g. `.`) must not flood the review.
 const MAX_FINDINGS_PER_RULE: usize = 20;
 
 #[derive(Clone)]
@@ -138,8 +140,8 @@ pub fn parse_rules(raw: &[Value]) -> Vec<Rule> {
         .collect()
 }
 
-/// (path → (rules.json mtime_ms, parsed rules)) — repo rules are read per
-/// scan for every project a live session belongs to; cache by mtime.
+/// (path → (rules.json mtime_ms, parsed rules)). Repo rules are read on
+/// every review and scan, so they are cached by mtime.
 type RepoRulesCache = HashMap<String, (Option<u128>, Vec<Rule>)>;
 static REPO_RULES: Lazy<Mutex<RepoRulesCache>> = Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -172,12 +174,31 @@ pub fn repo_rules_for(project_path: Option<&str>) -> Vec<Rule> {
     rules
 }
 
+/// Why the repository's `.ars/rules.json` gives no rules, when it exists
+/// but cannot be used.
+pub fn repo_rules_problem(root: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(Path::new(root).join(".ars").join("rules.json")).ok()?;
+    match serde_json::from_str::<Value>(&raw) {
+        Ok(v) if v.get("rules").is_some_and(Value::is_array) => None,
+        Ok(_) => Some(".ars/rules.json has no \"rules\" list, so its checks are not used.".into()),
+        Err(e) => Some(format!(
+            ".ars/rules.json could not be read ({e}), so its checks are not used."
+        )),
+    }
+}
+
 /// Evaluate the rules against one normalized session, appending findings.
 pub fn apply_rules(session: &mut AgentSession, rules: &[Rule]) {
+    let found = findings_for(&session.files, rules);
+    session.findings.extend(found);
+}
+
+/// The findings `rules` raise on `files` (their paths and added lines).
+pub fn findings_for(files: &[FileChange], rules: &[Rule]) -> Vec<Value> {
     let mut found: Vec<Value> = Vec::new();
     for rule in rules {
         let mut hits = 0usize;
-        for file in &session.files {
+        for file in files {
             if hits >= MAX_FINDINGS_PER_RULE {
                 break;
             }
@@ -251,7 +272,7 @@ pub fn apply_rules(session: &mut AgentSession, rules: &[Rule]) {
             }
         }
     }
-    session.findings.extend(found);
+    found
 }
 
 fn finding(rule: &Rule, id: String, path: &str, line: Option<i64>, matched: &str) -> Value {

@@ -1,4 +1,4 @@
-// Gemini CLI adapter — parses saved conversations from
+// Gemini CLI adapter: parses saved conversations from
 // ~/.gemini/tmp/<hash>/: `checkpoint*.json` (raw Gemini API Content[] written
 // by /chat save and --checkpointing) and `chats/*.json` (session files with a
 // messages array). Defensive by design: Gemini CLI's on-disk format is not a
@@ -323,14 +323,14 @@ pub fn parse_gemini_file(raw: &str, fallback_id: &str, mtime_iso_ts: &str) -> Op
         .or_else(|| parsed.get("checkpoint").and_then(Value::as_array));
 
     if let Some(contents) = contents {
-        // checkpoint*.json — raw Gemini API Content[] (no timestamps)
+        // checkpoint*.json: raw Gemini API Content[] (no timestamps)
         for c in contents {
             if c.is_object() {
                 consume_content(&mut state, s(c.get("role")), c.get("parts"), mtime_iso_ts);
             }
         }
     } else {
-        // chats/*.json — session file with a messages array
+        // chats/*.json: session file with a messages array
         let messages = parsed.get("messages").and_then(Value::as_array)?;
         let sid = s(parsed.get("sessionId"));
         if !sid.is_empty() {
@@ -588,7 +588,7 @@ impl SessionAdapter for GeminiCliAdapter {
         walk_json(Path::new(&dir), 3, &mut candidates);
         if candidates.is_empty() {
             status.hint =
-                Some("No Gemini CLI conversations found — save one with /chat save or enable --checkpointing.".to_string());
+                Some("No Gemini CLI conversations found. Save one with /chat save, or enable --checkpointing.".to_string());
             return CollectResult {
                 sessions: Vec::new(),
                 status,

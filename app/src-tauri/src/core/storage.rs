@@ -1,10 +1,11 @@
 // The ~/.agent-review-studio/ars.db SQLite store: session history (scans
-// upsert, so sessions survive transcript rotation) and approvals.
+// upsert, so sessions survive transcript rotation), project reviews and the
+// file snapshots of their rounds.
 //
-// Failures are never swallowed: review writes (approvals, archive) return
-// Result for the API to surface, and the scanner-facing calls — which keep
-// their infallible signatures so a broken store never breaks a scan —
-// record what failed in `last_error`, which the inbox route reports.
+// Failures are never swallowed. Review writes and hiding sessions return Result
+// for the API to surface. The scanner's calls keep infallible signatures,
+// so a broken store never breaks a scan, and record what failed in
+// `last_error`, which the sessions route reports.
 
 use super::config::config_dir;
 use super::domain::AgentSession;
@@ -38,10 +39,19 @@ CREATE TABLE IF NOT EXISTS sessions (
   summary TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_inbox ON sessions (archived, timestamp DESC);
-CREATE TABLE IF NOT EXISTS approvals (
-  session_id TEXT PRIMARY KEY,
+-- Per-session reviews of 0.9, which project reviews replaced.
+DROP TABLE IF EXISTS approvals;
+CREATE TABLE IF NOT EXISTS project_reviews (
+  key TEXT PRIMARY KEY,
+  root TEXT NOT NULL,
+  rev INTEGER NOT NULL,
   updated_at TEXT NOT NULL,
   payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS review_blobs (
+  hash TEXT PRIMARY KEY,
+  content BLOB NOT NULL,
+  created_at TEXT NOT NULL
 );
 "#;
 
@@ -58,7 +68,12 @@ fn now_iso() -> String {
 /// Open the database and bring its schema up to date. A connection whose
 /// schema failed is never cached: the next call tries again.
 fn open() -> Result<Connection, String> {
-    let dir = config_dir();
+    // Unit tests never touch the user's database.
+    let dir = if cfg!(test) {
+        std::env::temp_dir().join(format!("ars-test-db-{}", std::process::id()))
+    } else {
+        config_dir()
+    };
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
     let path = dir.join("ars.db");
@@ -79,7 +94,7 @@ fn open() -> Result<Connection, String> {
 }
 
 /// Runs `f` against the shared connection (opened on first use). A poisoned
-/// lock is recovered — a panic elsewhere must not disable persistence.
+/// lock is recovered: a panic elsewhere must not disable persistence.
 fn with_db<T>(f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, String> {
     let mut guard = DB.lock().unwrap_or_else(|e| e.into_inner());
     let conn = match guard.take() {
@@ -108,7 +123,7 @@ fn note<T>(op: &'static str, result: Result<T, String>) -> Option<T> {
 }
 
 /// The current session-history failures (scan-time reads and writes), if
-/// any — surfaced by the inbox route as `storageError`.
+/// any. GET /sessions reports them as `storageError`.
 pub fn last_error() -> Option<String> {
     let status = STATUS.lock().unwrap_or_else(|e| e.into_inner());
     if status.is_empty() {
@@ -217,21 +232,6 @@ pub fn archived_map() -> HashMap<String, bool> {
     .unwrap_or_default()
 }
 
-/// The full payload of one stored session.
-pub fn get_session_payload(id: &str) -> Option<Value> {
-    note(
-        "read",
-        with_db(|conn| {
-            conn.query_row("SELECT payload FROM sessions WHERE id = ?1", [id], |row| {
-                row.get::<_, String>(0)
-            })
-            .optional()
-        }),
-    )
-    .flatten()
-    .and_then(|raw| serde_json::from_str(&raw).ok())
-}
-
 /// (summary, archived, content_hash) for the freshest rows per bucket,
 /// newest first, read from the summary column. Rows without a stored
 /// summary fall back to their full payload once: the derived summary is
@@ -302,8 +302,8 @@ pub fn list_stored_summaries(
     out
 }
 
-/// Archive / un-archive stored sessions, atomically. Returns how many rows
-/// actually exist and were updated.
+/// Hide stored sessions (archived in the database), or show them again,
+/// atomically. Returns how many rows actually exist and were updated.
 pub fn set_archived(session_ids: &[String], archived: bool) -> Result<usize, String> {
     with_db(|conn| {
         let tx = conn.unchecked_transaction()?;
@@ -319,40 +319,141 @@ pub fn set_archived(session_ids: &[String], archived: bool) -> Result<usize, Str
         tx.commit()?;
         Ok(changed)
     })
-    .map_err(|e| format!("Could not update the archive in SQLite: {e}"))
+    .map_err(|e| format!("Could not save which sessions are hidden: {e}"))
 }
 
-pub fn get_approvals() -> Result<Value, String> {
-    let mut out = serde_json::Map::new();
-    let rows = with_db(|conn| {
-        let mut stmt = conn.prepare("SELECT session_id, payload FROM approvals")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()
-    })
-    .map_err(|e| format!("Could not read reviews from SQLite: {e}"))?;
-    for (session_id, payload) in rows {
-        let value = serde_json::from_str::<Value>(&payload)
-            .map_err(|_| format!("The stored review for {session_id} is invalid JSON."))?;
-        out.insert(session_id, value);
-    }
-    Ok(Value::Object(out))
-}
-
-pub fn save_approval(session_id: &str, state: &Value) -> Result<(), String> {
-    with_db(|conn| {
-        conn.execute(
-            "INSERT OR REPLACE INTO approvals (session_id, updated_at, payload) VALUES (?1, ?2, ?3)",
-            rusqlite::params![session_id, now_iso(), state.to_string()],
+/// The stored review of one project: (revision counter, state JSON).
+pub fn get_project_review(key: &str) -> Result<Option<(i64, Value)>, String> {
+    let row = with_db(|conn| {
+        conn.query_row(
+            "SELECT rev, payload FROM project_reviews WHERE key = ?1",
+            [key],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )
+        .optional()
     })
-    .map(|_| ())
+    .map_err(|e| format!("Could not read the review from SQLite: {e}"))?;
+    match row {
+        None => Ok(None),
+        Some((rev, payload)) => serde_json::from_str::<Value>(&payload)
+            .map(|v| Some((rev, v)))
+            .map_err(|_| "The stored review is invalid JSON.".to_string()),
+    }
+}
+
+/// Store a project's review when its revision is still `expect_rev` (0 for
+/// a project with none yet); returns the new revision, or None when another
+/// writer got there first.
+pub fn put_project_review(
+    key: &str,
+    root: &str,
+    expect_rev: i64,
+    state: &Value,
+) -> Result<Option<i64>, String> {
+    with_db(|conn| {
+        // Immediate: the app and the CLI may both write; a deferred
+        // transaction would fail on the second writer instead of waiting.
+        let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let current: i64 = tx
+            .query_row(
+                "SELECT rev FROM project_reviews WHERE key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        if current != expect_rev {
+            return Ok(None);
+        }
+        let next = current + 1;
+        tx.execute(
+            "INSERT OR REPLACE INTO project_reviews (key, root, rev, updated_at, payload) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![key, root, next, now_iso(), state.to_string()],
+        )?;
+        tx.commit()?;
+        Ok(Some(next))
+    })
     .map_err(|e| format!("Could not save the review to SQLite: {e}"))
 }
 
-pub fn clear_approvals() -> Result<(), String> {
-    with_db(|conn| conn.execute("DELETE FROM approvals", []))
-        .map(|_| ())
-        .map_err(|e| format!("Could not clear reviews from SQLite: {e}"))
+/// Every reviewed project: (root, last update).
+pub fn list_project_reviews() -> Result<Vec<(String, String)>, String> {
+    with_db(|conn| {
+        let mut stmt =
+            conn.prepare("SELECT root, updated_at FROM project_reviews ORDER BY updated_at DESC")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<Result<Vec<_>, _>>()
+    })
+    .map_err(|e| format!("Could not read reviews from SQLite: {e}"))
+}
+
+pub fn clear_project_reviews() -> Result<(), String> {
+    with_db(|conn| {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM project_reviews", [])?;
+        tx.execute("DELETE FROM review_blobs", [])?;
+        tx.commit()
+    })
+    .map_err(|e| format!("Could not clear reviews from SQLite: {e}"))
+}
+
+/// Delete the file snapshots no round of any project refers to any more.
+pub fn prune_blobs() -> Result<usize, String> {
+    with_db(|conn| {
+        let tx = conn.unchecked_transaction()?;
+        let mut used = std::collections::HashSet::new();
+        {
+            let mut stmt = tx.prepare("SELECT payload FROM project_reviews")?;
+            let payloads = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            for payload in payloads {
+                let state: Value = serde_json::from_str(&payload?).unwrap_or(Value::Null);
+                for round in state["rounds"].as_array().into_iter().flatten() {
+                    for hash in round["files"]
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|(_, h)| h.as_str())
+                    {
+                        used.insert(hash.to_string());
+                    }
+                }
+            }
+        }
+        let stored: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT hash FROM review_blobs")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut removed = 0;
+        for hash in stored.iter().filter(|h| !used.contains(*h)) {
+            removed += tx.execute("DELETE FROM review_blobs WHERE hash = ?1", [hash])?;
+        }
+        tx.commit()?;
+        Ok(removed)
+    })
+    .map_err(|e| format!("Could not clean up file snapshots in SQLite: {e}"))
+}
+
+/// Content-addressed file snapshots of the rounds.
+pub fn put_blob(hash: &str, content: &[u8]) -> Result<(), String> {
+    with_db(|conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO review_blobs (hash, content, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![hash, content, now_iso()],
+        )
+    })
+    .map(|_| ())
+    .map_err(|e| format!("Could not save a file snapshot to SQLite: {e}"))
+}
+
+pub fn get_blob(hash: &str) -> Result<Option<Vec<u8>>, String> {
+    with_db(|conn| {
+        conn.query_row(
+            "SELECT content FROM review_blobs WHERE hash = ?1",
+            [hash],
+            |row| row.get(0),
+        )
+        .optional()
+    })
+    .map_err(|e| format!("Could not read a file snapshot from SQLite: {e}"))
 }

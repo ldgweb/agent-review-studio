@@ -1,47 +1,51 @@
 import { lazy, Suspense, useState } from 'react';
-import { HashRouter, Navigate, NavLink, Route, Routes, useMatch } from 'react-router-dom';
+import { HashRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { getTheme, toggleTheme, type Theme } from './lib/theme';
-import { ApprovalProvider, effectiveStatus, useApproval } from './state/approvalStore';
-import { SessionsProvider, useSessions } from './state/sessionsStore';
-import { SessionsInbox } from './features/inbox/SessionsInbox';
-import { AgentBadge, StatusPill } from './components/ui';
+import { SessionsProvider } from './state/sessionsStore';
+import { ProjectsHome } from './features/home/ProjectsHome';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { IconArrowLeft } from './components/icons';
+import { IconArrowLeft, IconSettings } from './components/icons';
 import { closeWindow, isDesktop, minimizeWindow, toggleMaximizeWindow } from './lib/desktop';
 
-// Route-level code splitting: the inbox is the first paint and stays in the
-// main chunk; the session workbench (which carries DiffView + the refractor
-// grammars) and Settings load on first navigation.
-const SessionLayout = lazy(() =>
-  import('./features/session/SessionLayout').then((m) => ({ default: m.SessionLayout })),
-);
-const ReviewWorkbench = lazy(() =>
-  import('./features/session/tabs/ReviewWorkbench').then((m) => ({ default: m.ReviewWorkbench })),
-);
+// Code splitting by route: the projects home is the first paint and stays
+// in the main chunk; the review (the diff viewer and its grammars) and
+// Settings load when first opened.
+const ReviewPage = lazy(() => import('./features/review/ReviewPage').then((m) => ({ default: m.ReviewPage })));
 const SettingsView = lazy(() =>
   import('./features/settings/SettingsView').then((m) => ({ default: m.SettingsView })),
 );
 
-// One 40px bar owns all app chrome. On session routes it becomes the session
-// header too: back, agent, goal, status — the page below spends its pixels
-// on the code.
+// One quiet bar owns all app chrome: the brand (home), where you are, and
+// settings. The page below spends its pixels on the code.
 
-function SessionCrumb({ id }: { id: string }) {
-  const { getSession, getSessionDetail } = useSessions();
-  const session = getSessionDetail(id) ?? getSession(id);
-  const { state } = useApproval(id, session?.reviewRevision, session?.contentHash);
-  if (!session) return null;
-
+function ProjectCrumb() {
+  const [params] = useSearchParams();
+  const path = params.get('path') ?? '';
+  const name = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
   return (
     <div className="crumb">
-      <NavLink to="/" className="btn btn-sm crumb-back" title="Back to sessions">
+      <NavLink to="/" className="btn btn-sm crumb-back" title="All projects" aria-label="All projects">
         <IconArrowLeft size={13} />
       </NavLink>
-      <AgentBadge agent={session.agent} label={session.agentLabel} />
-      <span className="crumb-goal" title={`${session.declaredGoal}\n${session.projectName} @ ${session.branch} · ${session.model}`}>
-        {session.declaredGoal}
-      </span>
-      <StatusPill status={effectiveStatus(session, state)} />
+      <span className="crumb-goal" title={path}>{name}</span>
+    </div>
+  );
+}
+
+/** Settings: back to where you came from (the projects, when it opened first) */
+function SettingsCrumb() {
+  const navigate = useNavigate();
+  const back = () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (idx > 0) navigate(-1);
+    else navigate('/');
+  };
+  return (
+    <div className="crumb">
+      <button className="btn btn-sm crumb-back" title="Back" aria-label="Back" onClick={back}>
+        <IconArrowLeft size={13} />
+      </button>
+      <span className="crumb-goal">Settings</span>
     </div>
   );
 }
@@ -50,9 +54,9 @@ function ThemeToggle() {
   const [theme, setTheme] = useState<Theme>(getTheme);
   return (
     <button
-      className="btn btn-sm theme-toggle"
+      className="icon-btn"
       title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-      aria-label="Toggle light or dark theme"
+      aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       onClick={() => setTheme(toggleTheme())}
     >
       {theme === 'dark' ? '☾' : '☀'}
@@ -62,35 +66,29 @@ function ThemeToggle() {
 
 function TopBar() {
   const desktop = isDesktop();
-  const match = useMatch('/sessions/:id/*');
-  // React Router already decodes params — the same id SessionLayout reads
-  const sessionId = match?.params.id ?? null;
+  const { pathname } = useLocation();
 
   return (
     <header className={`topbar${desktop ? ' topbar-desktop' : ''}`} data-tauri-drag-region="">
-      <span className="topbar-brand" data-tauri-drag-region="" title="Agent Review Studio">
+      <NavLink to="/" className="topbar-brand" title="All projects">
         <span>A</span>RS
-      </span>
-      <nav className="topnav">
-        <NavLink to="/" end className={({ isActive }) => (isActive ? 'active' : '')}>
-          Sessions
-        </NavLink>
-        <NavLink to="/settings" className={({ isActive }) => (isActive ? 'active' : '')}>
-          Settings
-        </NavLink>
-      </nav>
-      {sessionId && <SessionCrumb id={sessionId} />}
+      </NavLink>
+      {pathname === '/project' && <ProjectCrumb />}
+      {pathname === '/settings' && <SettingsCrumb />}
       <div className="topbar-spacer" data-tauri-drag-region="" />
+      <NavLink to="/settings" className={({ isActive }) => `icon-btn${isActive ? ' active' : ''}`} title="Settings" aria-label="Settings">
+        <IconSettings size={15} />
+      </NavLink>
       <ThemeToggle />
       {desktop && (
         <div className="win-controls">
-          <button className="win-btn" title="Minimize" onClick={minimizeWindow}>
+          <button className="win-btn" title="Minimize" aria-label="Minimize" onClick={minimizeWindow}>
             <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1.2" /></svg>
           </button>
-          <button className="win-btn" title="Maximize" onClick={toggleMaximizeWindow}>
+          <button className="win-btn" title="Maximize" aria-label="Maximize" onClick={toggleMaximizeWindow}>
             <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.8" y="0.8" width="8.4" height="8.4" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg>
           </button>
-          <button className="win-btn win-btn-close" title="Close" onClick={closeWindow}>
+          <button className="win-btn win-btn-close" title="Close" aria-label="Close" onClick={closeWindow}>
             <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" strokeWidth="1.2" /></svg>
           </button>
         </div>
@@ -101,27 +99,21 @@ function TopBar() {
 
 export function App() {
   return (
-    <ApprovalProvider>
-      <SessionsProvider>
+    <SessionsProvider>
       <HashRouter>
         <ErrorBoundary>
-        <TopBar />
-        <Suspense fallback={<main className="page"><span className="spinner" /></main>}>
-        <Routes>
-          <Route path="/" element={<SessionsInbox />} />
-          <Route path="/settings" element={<SettingsView />} />
-          <Route path="/sessions/:id" element={<SessionLayout />}>
-            <Route index element={<Navigate to="review" replace />} />
-            <Route path="review" element={<ReviewWorkbench />} />
-            {/* Unknown session sub-routes land on the review */}
-            <Route path="*" element={<Navigate to="../review" replace />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-        </Suspense>
+          <TopBar />
+          <Suspense fallback={<main className="page"><span className="spinner" /></main>}>
+            <Routes>
+              <Route path="/" element={<ProjectsHome />} />
+              <Route path="/settings" element={<SettingsView />} />
+              {/* `ars <dir>` and the projects home land here */}
+              <Route path="/project" element={<ReviewPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </ErrorBoundary>
       </HashRouter>
-      </SessionsProvider>
-    </ApprovalProvider>
+    </SessionsProvider>
   );
 }

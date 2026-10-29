@@ -5,8 +5,8 @@
   "model": "demo-model",
   "projectName": "demo-shop",
   "branch": "feature/checkout-discounts",
-  "prompt": "Add a discount-code feature to the checkout: percentage and fixed-amount codes, validated server-side, with an expiry date. Update the database, wire the checkout UI, and keep the tests green.\n\n(This is a SAMPLE session shipped with Agent Review Studio so you can try every part of the review before your own agents show up. Archive it when you are done — it runs in a sandbox repository and never touches your own projects.)",
-  "outcome": "Implemented discount codes end-to-end: new discounts table, validation service and checkout integration. One test was updated to match the new totals API. Note: I refactored src/checkout/discount.ts again after the last test run to simplify rounding — re-run the suite before merging.",
+  "prompt": "Add a discount-code feature to the checkout: percentage and fixed-amount codes, validated server-side, with an expiry date. Update the database, wire the checkout UI, and keep the tests green.\n\n(This is a SAMPLE session shipped with Agent Review Studio, so you can try every part of the review before your own agents show up. It runs in a sandbox repository and never touches your own projects. Hide it when you are done.)",
+  "outcome": "Implemented discount codes end-to-end: new discounts table, validation service and checkout integration. One test was updated to match the new totals API. Note: I refactored src/checkout/discount.ts again after the last test run to simplify rounding. Re-run the suite before merging.",
   "plan": [
     "Add a discounts table with code, type, value and expiry",
     "Create a validation service with server-side expiry checks",
@@ -20,10 +20,10 @@
     { "time": "2026-07-20T09:05:40Z", "kind": "file-edit", "title": "Created the discounts migration", "filePath": "db/migrations/2026_add_discounts.sql" },
     { "time": "2026-07-20T09:09:15Z", "kind": "file-edit", "title": "Wrote the validation service", "filePath": "src/auth/session.ts" },
     { "time": "2026-07-20T09:12:30Z", "kind": "file-edit", "title": "Wired discounts into the checkout", "filePath": "src/checkout/discount.ts" },
-    { "time": "2026-07-20T09:14:00Z", "kind": "test-run", "title": "npm test — 1 failing", "command": "npm test", "exitCode": 1, "detail": "checkout.test.ts: expected total 90.00, received 90.001 — rounding drift in applyDiscount()." },
+    { "time": "2026-07-20T09:14:00Z", "kind": "test-run", "title": "npm test: 1 failing", "command": "npm test", "exitCode": 1, "detail": "checkout.test.ts: expected total 90.00, received 90.001. Rounding drift in applyDiscount()." },
     { "time": "2026-07-20T09:16:20Z", "kind": "file-edit", "title": "Fixed rounding, updated the test", "filePath": "tests/checkout.test.ts" },
-    { "time": "2026-07-20T09:17:05Z", "kind": "test-run", "title": "npm test — all green", "command": "npm test", "exitCode": 0, "detail": "12 passed." },
-    { "time": "2026-07-20T09:19:40Z", "kind": "file-edit", "title": "Refactored rounding AFTER the green run", "filePath": "src/checkout/discount.ts", "detail": "Simplified toCents() — this edit was never re-tested: ARS flags it below." },
+    { "time": "2026-07-20T09:17:05Z", "kind": "test-run", "title": "npm test: all green", "command": "npm test", "exitCode": 0, "detail": "12 passed." },
+    { "time": "2026-07-20T09:19:40Z", "kind": "file-edit", "title": "Refactored rounding AFTER the green run", "filePath": "src/checkout/discount.ts", "detail": "Simplified toCents(). This edit was never re-tested, so ARS flags the file." },
     { "time": "2026-07-20T09:21:00Z", "kind": "note", "title": "Self-report written", "detail": "Suggested re-running the suite before merge." }
   ],
   "files": [

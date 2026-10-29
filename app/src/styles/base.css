@@ -80,19 +80,16 @@ h3 {
   line-height: 1.3;
 }
 
-/* App-like feel: UI chrome is not selectable or draggable; content stays
-   copyable (diffs, prose, inputs — this is a review tool). */
+/* App-like feel: the chrome is not selectable or draggable. Content stays
+   copyable (diffs, prose, inputs): this is a review tool. */
 button,
 summary,
 nav,
 th,
 .badge,
 .chip,
-.rail-tab,
 .section-label,
-.stat-label,
-.topbar,
-.file-nav-item {
+.topbar {
   user-select: none;
   -webkit-user-select: none;
 }

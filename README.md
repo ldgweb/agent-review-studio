@@ -5,11 +5,11 @@
 ![Platform: Windows](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)
 
-A desktop app for reviewing what a coding agent changed. It shows the agent's own session next to the diff, so you can decide file by file what to keep.
+A desktop app for reviewing what a coding agent changed in your project, before you commit. Above every change it shows why the agent made it. You decide what to keep, and your decisions become a review the agent can act on.
 
 **Windows beta · React + TypeScript + Tauri/Rust · no account, no cloud**
 
-![A 30-second tour: open a session, comment on a line, get a correction request for the agent](.github/assets/demo.gif)
+![A project's review: every change with the agent's reason above it, a comment and a suggested change on its lines](.github/assets/review.png)
 
 > I work on this in my spare time. Issues and pull requests are welcome, but I can't promise quick replies.
 
@@ -17,9 +17,11 @@ A desktop app for reviewing what a coding agent changed. It shows the agent's ow
 
 I wanted an easy way to review the code an agent has just changed in my current work session, and an equally easy way to tell it which parts are fine, which ones to change or improve, or simply to ask why it made a change.
 
-A diff alone doesn't get you there. It shows you *what* changed, not *why*. When an agent touches fifteen files, I also want to know what it was asked to do, what plan it followed, which commands it ran, and whether the tests it ran still cover the code it ended up with.
+A diff alone doesn't get you there. It shows you *what* changed, not *why*. And an editor shows every line with the same weight, even when half of the change is a moved function or a reformatted block.
 
-So Agent Review Studio reads the transcript the agent already saves on your machine and puts it beside the real Git diff. It points out where to look first. You comment on the exact lines you care about, a fix or just a question, and it collects them into one message to paste into the agent's next prompt. When you're happy, it commits the files you approved, or reverts the ones you rejected after taking a backup.
+So Agent Review Studio starts from Git, like your editor does: the review is everything uncommitted in the project, whoever or whatever changed it. Then it reads the transcripts the agents already save on your machine. Above every changed block it shows the request it came from and what the agent said right before making it. Blocks that no recorded agent edit explains (a shell command, a script, a change by hand) say so. You decide change by change, comment on the exact lines or write the code you want instead. **Copy review** then gives the agent all of it in one text. The next time, you only look at what changed since.
+
+It never touches your code. Even a rejection is an instruction for the agent, not an edit by the app.
 
 It's far from finished, but that's the goal.
 
@@ -28,64 +30,96 @@ It's far from finished, but that's the goal.
 1. Download the latest Windows build from [Releases](https://github.com/ldgweb/agent-review-studio/releases), or [build it from source](#build-from-source).
 2. Start the app and click **Try the sample tour**. It sets up a separate sandbox repository with two sample sessions, so you can try everything without touching your own projects.
 3. Then use it with your own agent. Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI and `ars/v1` folders are picked up from their default locations ([details](#where-sessions-come-from)). For Aider, add your project folders under **Settings → Session sources**.
+4. While you work, run `ars .` in the project folder (any subfolder works). The app opens, or comes to the front, on that project's review. The installer doesn't add `ars` to your `PATH`; see [Install](#install-windows).
+
+## The everyday loop
+
+```text
+ars .           # the agent just finished: open what it changed
+a / r           # approve or reject the file; c writes a note about it
+⇧A ⇧R  ⇧C       # approve, reject or comment on one change; [ and ] move between changes
+Copy review     # copy it for the agent: every verdict becomes an instruction
+```
+
+Paste it into the agent's next prompt. Or let the agent fetch it: ask it to run `ars feedback` in the project, and it gets the same text straight in its session. That works with any agent that can run a command (Claude Code, Codex, Cursor's agent, Gemini CLI, Aider). In Claude Code you can make it a command once. Save a file `~/.claude/commands/review.md` that says *Run `ars feedback` in this project and carry out every numbered item; then reply with one line per item.* Then type `/review`.
+
+The review is written for the agent to act on with as few tokens as possible. There is one numbered item per thing to do, grouped by file. Each item starts with a verb and points at the line by its number and the quoted code. Code is spelled out only where the agent can't know it: what to put back, or what you want instead.
+
+````text
+# Review of your changes in shop (main @ 3f2a9c1)
+
+Change only what is listed; leave everything else as it is. Line numbers refer to the files as they are now; the quoted code marks the spot. ANSWER items need a reply; change the code only if you agree. When done, reply with one line per item: its number and what you did.
+
+## src/cart.ts
+1. CHANGE line 12 `console.log(total)`: drop the log
+2. REPLACE line 30 `const limit = 10` with:
+```ts
+const limit = MAX_ITEMS
+```
+3. UNDO lines 50–51 `retryAll()`: remove the lines you added.
+4. ANSWER line 64 `cache.clear()`: why not reuse the store?
+
+## src/legacy.ts
+5. RESTORE this file you deleted: `git checkout HEAD -- src/legacy.ts`
+
+Accepted as is: src/api.ts, docs/cart.md.
+````
+
+![Your review for the agent, ready to copy: one numbered item per thing to do](.github/assets/your-review.png)
+
+The verbs are CHANGE, REPLACE and REMOVE (from your comments and suggested code), ANSWER (a comment that ends with a question mark), UNDO, DELETE and RESTORE (from rejections) and FIX (a hint you pass on). Comments from your last review that the agent left untouched come back, marked as still open.
+
+When the agent is done, run `ars .` again. Changed files open on **Since last review**: the diff of just what the agent did after your review. Every verdict on code that didn't change is still there.
+
+![Since last review: only what the agent changed after your comments, with the last review's comments above the file](.github/assets/since-last-review.png)
 
 ## Try it in five minutes
 
-The sample tour isn't a mock-up: it's a real Git repository in `%USERPROFILE%\.agent-review-studio\demo` with two sample sessions. Nothing you do there touches your own projects.
+The sample tour isn't a mock-up: it's a real Git repository in `%USERPROFILE%\.agent-review-studio\demo\demo-shop` with two sample sessions. Nothing you do there touches your own projects.
 
-1. Click **Try the sample tour** on the welcome screen. If you already have sessions, use **Settings → Data → Sample tour → Install / reset** instead. The inbox shows two sessions from an agent called *ARS Tour (sample)*.
-
-   ![The review queue with the two sample sessions](.github/assets/inbox.png)
-
-2. Open the first one, *"Add a discount-code feature…"*. The middle of the screen is the real diff, file by file. On the side you'll find the **Session** tab (what the agent was asked, its plan, and what it says it did), the **Timeline** of commands and test runs, the **Findings** and **Git**.
-
-   ![The session context beside the diff: prompt, plan and the agent's self-report](.github/assets/session-context.png)
-
+1. Click **Try the sample tour** on the welcome screen (or **Settings → Data → Sample tour → Install / reset**). The review of the sandbox project opens.
+2. Every block of changes has a line on top with the sample agent's reason for it. Click the reason to read your request and the agent's words in full, right there. The agent's whole session (your requests, its report, what it ran) opens from the bottom of the file list.
 3. Look at what the review flags for you:
    - `src/auth/session.ts` contains what looks like a hardcoded API key;
-   - `src/checkout/discount.ts` still has a `TODO` and a `console.log`, and it was edited **after** the last green test run. The timeline shows "Refactored rounding AFTER the green run".
-4. Decide: press `a` on the files that look fine, `r` on one you'd throw away, and `c` on `discount.ts`. Hover a line in the diff, click the **+** that appears and write a comment, say *"remove this console.log"*. `Ctrl+Enter` saves it.
-5. Click **Corrections** in the bottom bar. Your comments, notes and flagged findings are already collected into one request for the agent, each with its file and line. **Copy for ARS Tour (sample)** (the button takes the agent's name) copies it, ready to paste into the agent's next prompt.
+   - `src/checkout/discount.ts` still has a `TODO` and a `console.log`, and it was edited **after** the last green test run.
+4. Decide: press `a` on the files that look fine and `r` on one you'd throw away. In `discount.ts`, hover a line and click the speech bubble in the margin to write a comment, say *"remove this console.log"*. Or click the pencil next to it to suggest code: write the line as you want it. The suggestion shows up in the diff, under the line it replaces. `Ctrl+Enter` saves. A comment marks its change as "change requested". The ✓ / ✕ on a block decide just that change.
+5. The retry files come from a second sample you **already reviewed once**: `src/api/client.ts` is still approved, and `src/api/retry.ts` opens on **Since last review**, which shows only the cap the agent added after your comment. Your comment from that round sits above the diff, saying whether the agent changed its code.
+6. When every file has a verdict, click **Copy review**. It is copied, ready to paste: what you rejected is in it as UNDO or DELETE, for the agent to carry out. **Your review** shows it, and lets you edit it, at any point. The sandbox's files stay exactly as they were.
+7. In PowerShell, try the CLI on the same project (from source, run `npm run ars -- <command>` in `app/`):
 
-   ![A correction request assembled from line comments and flagged files](.github/assets/correction-request.png)
-
-6. Open the second sample, which is already reviewed. Select a rejected file and click **Revert…** in the bottom bar to restore it; a backup is saved first. Then open the **Git** tab on the side, commit the approved files in the sandbox repository and watch the commit graph update.
-7. In a terminal, try the CLI on the same sample (from source, run `npm run ars -- <command>` in `app/`):
-
-   ```text
-   ars list
-   ars review ars-demo-tour
-   ars pr ars-demo-tour
+   ```powershell
+   ars review "$env:USERPROFILE\.agent-review-studio\demo\demo-shop"
+   ars pr "$env:USERPROFILE\.agent-review-studio\demo\demo-shop"
    ```
 
-Once every file has a verdict, **Finalize** records the outcome. **Install / reset** in Settings puts the tour back to the start, and archiving the samples hides them.
+**Install / reset** in Settings puts the tour back to the start.
 
 ### What line comments are for
 
-If a change is fine, you don't need comments: approve it and commit. Comments are for when something has to change. Instead of writing the agent a follow-up from memory ("in cart.ts the rounding is wrong, and also…"), you comment on the exact lines as you read, and the app turns them into a precise correction request. When the agent's next session comes in, you review it the same way. The content has changed, so your earlier decisions don't carry over by accident.
+If a change is fine, you don't need comments: approve it. Comments are for when something has to change. Instead of writing the agent a follow-up from memory ("in cart.ts the rounding is wrong, and also…"), you comment on the exact lines as you read, and the app turns them into precise items for the agent. A comment sits on its change. When the agent rewrites that code, the next review shows the comment above the file, marked "the agent changed that code", and the review for the agent stops repeating it.
 
 ## How a review works
 
-1. **Inbox:** the latest sessions from each source (30 per source by default), newest first, with their risk flags and how far the review has got.
-2. **Read the session:** the original request, the agent's plan and its final report, and a timeline of commands and test runs.
-3. **Read the diff:** files are split into *needs attention* and *routine*. Hints point at what's worth a closer look: possible hardcoded secrets, leftover debug code or TODOs, test files that shrank, unusually large single-file changes, files edited after the last passing test run, and any regex checks you add yourself.
-4. **Decide per file:** approve (`a`), reject (`r`) or request changes (`c`), and comment on specific lines. Press `?` to see every shortcut.
-5. **Apply:** commit only the approved files (anything else you had staged is left alone), revert rejected files after an automatic backup, or export a correction request from your comments and notes and paste it into the agent's next prompt.
-6. **Share context:** `ars pr` turns the session into a Markdown summary for the pull request.
+1. **Open:** `ars .`, or a project on the home screen. The review is every uncommitted change of the Git repository: staged or not, plus new files.
+2. **Read the why:** above each block, the agent's words before the edit (click them for your request too), or "No recorded agent edit" with the command that named the file, when there was one.
+3. **Read less:** moved code, whitespace-only changes and generated files (lockfiles, minified bundles, what `.gitattributes` marks `linguist-generated` or `-diff`) are folded; the same change repeated in many places can be approved once. The file list puts first what deserves a closer look; hints under the code point at possible hardcoded secrets, leftover debug code or TODOs, test files that shrank, large single-file changes, files edited after the last passing test run, and any regex checks you add yourself.
+4. **Decide:** per file (`a` / `r`, or the buttons above the code) or per change (`⇧A` / `⇧R`, or ✓ / ✕ on the block). Comment on a line, or suggest the code you want instead; a note at the end of the file covers the rest. Press `?` to see every shortcut.
+5. **Copy review:** copy it (or save it as Markdown) and paste it into the agent's next prompt, or let the agent run `ars feedback`. Copying records a round: a snapshot of every changed file, the base of "since last review". Your files are not touched; commit with your own Git tools.
+6. **Share context:** `ars pr` turns the review into a Markdown summary for the pull request.
 
-![Findings, a line comment and the "not re-tested" signal on the real diff](.github/assets/review.png)
-
-Your decisions are tied to the session content, the Git `HEAD` and the current bytes of each file. If any of those change after you decide, the review reopens instead of applying an outdated verdict.
+Your decisions are tied to the code you saw, not to a session. A verdict on a change holds while that exact change exists, wherever it moves in the file. A verdict on a file without changes to show (a binary, a mode change) holds while its bytes and `HEAD` are the same. When something changes, only the decisions on what changed are gone.
 
 ## Features
 
-- **Local transcripts** from Claude Code, Codex, Cursor, VS Code Copilot, Aider, Gemini CLI and the open `ars/v1` JSON format. How much each adapter picks up depends on the transcript version; synthetic regression fixtures are included.
-- **Real working-tree diffs** for local Git repositories. Changes that only appear in the transcript are labelled as such.
-- **Decisions and line comments** stored locally in SQLite.
-- **Whole-file Git actions:** commits of selected files on an isolated index, and reverts that won't run unless the backup succeeded. Both need the decision saved at the current review revision, and both include any edits you made yourself that show up in the file's current diff.
-- **Correction requests** you can copy or save as Markdown, and **PR context** from the `ars` CLI, which runs on the same native core as the desktop app.
+- **Git first:** every uncommitted change, including the ones an agent made through a shell command or a script, which a transcript-based list would miss.
+- **The why of every change**, matched line by line against the edits recorded in Claude Code, Codex and `ars/v1` transcripts (other agents give file-level context). The counts are what they are, "8 of 10 lines", never a score.
+- **Since last review**, with comments that know whether their code changed.
+- **A diff that reads like your editor:** syntax colors from the whole file (a block comment stays a comment across lines), every changed word marked, removed and added lines paired by similarity so an inserted line doesn't shift the rest, moved code linked to where it came from, unified or side by side, context that expands from the file. **Whole file** (`f`) shows the entire file at once, colored, with the changes marked; your editor (VS Code, Cursor or Windsurf) is one click away. Right-click a file in the list to show it in File Explorer or copy its path.
+- **Change-level verdicts, and instructions instead of edits:** a rejected block becomes an UNDO with exactly what to remove or put back; a comment can carry the code you want instead (like a GitHub suggested change). Nothing in the project is ever written by the app.
+- **Fast:** the app reads only the open project's transcripts, and only the lines added since its last read; it refreshes when files change, never on a timer.
+- **PR context** from the `ars` CLI, which runs on the same native core as the desktop app.
 
-The hints are fixed rules, not a security assessment. A passing test recorded after an edit tells you something about the process; it doesn't prove the code is covered. A command with no exit code never counts as a pass. And an old transcript may not describe what's in your working tree today.
+The hints are fixed rules, not a security assessment. A passing test recorded after an edit tells you something about the process; it doesn't prove the code is covered. A command with no exit code never counts as a pass.
 
 ## Where sessions come from
 
@@ -101,7 +135,7 @@ The app only reads files the agents already write on your machine. These are the
 | Aider | `.aider.chat.history.md` inside each project | add the project folders |
 | Any agent or CI | `ars/v1` JSON files in `~/.agent-review-studio/sessions` (see the [example](fixtures/custom/basic.json) and the [parser](app/src-tauri/src/core/adapters/custom.rs)) | add more folders if needed |
 
-The app keeps its own copy of each session, so sessions stay listed even after the agent deletes its old transcripts. Turning a source off hides all of its sessions, copies included; turning it back on brings them back along with your decisions.
+The app keeps its own copy of each session, so sessions stay listed even after the agent deletes its old transcripts. Turning a source off hides its sessions, and its edits no longer explain changes in a review; the review says so when that is why a change has no explanation.
 
 Agents change their transcript formats from time to time. If an agent you use stops showing sessions, or shows them incomplete after an update, please open a **Transcript format changed** issue. [CONTRIBUTING.md](CONTRIBUTING.md#when-an-agent-changes-its-transcript-format) explains how adapters get updated.
 
@@ -118,9 +152,15 @@ Download the installer or the portable ZIP from [GitHub Releases](https://github
 
 - **Installer:** the NSIS `*-setup.exe` installs the desktop app and the CLI for the current user.
 - **Portable:** extract the ZIP and run `agent-review-studio.exe`, or `ars.exe --help` in a terminal.
-- The CLI sits next to the desktop executable. Run `ars.exe` from that folder or add it to your user `PATH`; the installer doesn't change `PATH`.
-- **Requirements:** Windows x64, the Microsoft Edge WebView2 Runtime, and Git on `PATH` for repository actions.
-- The session index, decisions, settings and backups go to `%USERPROFILE%\.agent-review-studio`, for the portable build too. Window position and the WebView2 cache live in `com.agentreviewstudio.desktop` folders under `%APPDATA%` and `%LOCALAPPDATA%`.
+- The CLI sits next to the desktop executable, and `ars .` starts the `agent-review-studio.exe` beside it. The installer doesn't change `PATH`; to run `ars` from any terminal, add the install folder to your user `PATH` once (PowerShell, then open a new terminal):
+
+  ```powershell
+  [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$env:LOCALAPPDATA\Agent Review Studio", 'User')
+  ```
+
+  For the portable build, use the folder you extracted it to.
+- **Requirements:** Windows x64, the Microsoft Edge WebView2 Runtime, and Git on `PATH` (the review reads the changes from it).
+- The session index, decisions, settings and the file snapshots of each review round go to `%USERPROFILE%\.agent-review-studio`, for the portable build too. Window position and the WebView2 cache live in `com.agentreviewstudio.desktop` folders under `%APPDATA%` and `%LOCALAPPDATA%`.
 - Builds aren't signed yet, so Windows may warn about an unknown publisher. You can check downloads against `SHA256SUMS.txt` in the release.
 
 There's no auto-update: download new versions by hand.
@@ -169,27 +209,34 @@ cargo clippy --release --locked --all-targets --manifest-path src-tauri/Cargo.to
 cargo test --release --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-The Rust audit looks up every registry package in `Cargo.lock` on OSV. It fails on advisories that affect the Windows build and lists the ones for other platforms separately. Both audits need internet access. Two Rust smoke tests are ignored by default because they read or change real user data; the normal tests only use synthetic fixtures and temporary repositories.
+The Rust audit looks up every registry package in `Cargo.lock` on OSV. It fails only on a vulnerability in a package the Windows build ships, unless `app/scripts/audit-allowlist.json` says why it doesn't affect the app. Informational advisories (unmaintained, unsound) and packages that only other platforms use are listed but don't fail it. Both audits need internet access. Three Rust smoke tests are ignored by default because they read or change real user data; the normal tests only use synthetic fixtures and temporary repositories.
 
 ## CLI
 
 ```text
-ars list
-ars review <session-id>
-ars pr <session-id>                   # print the context so you can check it
-ars pr <session-id> --dry-run         # show which PR it would post to; post nothing
-ars pr <session-id> --post            # actually post a PR comment
+ars .                       # open this project's review in the app
+ars open [dir]              # the same, for another folder
+ars list                    # recent agent sessions
+ars review [dir]            # the review in the terminal: who wrote what, your verdicts, findings, comments
+ars feedback [dir]          # for the agent: print the review as instructions, start the next round
+ars pr [dir]                # the review as a Markdown summary for the pull request
+ars pr [dir] --dry-run      # show which PR it would post to; post nothing
+ars pr [dir] --post         # actually post a PR comment
 ```
 
-`ars pr --post` needs `GH_TOKEN` (or `GITHUB_TOKEN`). It creates one review comment on the pull request, and updates that same comment on later runs. `ars --help` lists all the flags.
+`feedback` prints exactly what **Copy review** copies in the app (your edited text, if you edited it) and records the round the same way. When you have not asked for anything yet, it says so and records nothing. The agent needs `ars` on its `PATH` (see [Install](#install-windows)).
 
-If you've saved a review in the desktop app for the session's current revision, `ars review` and `ars pr` include your decisions: the overall outcome, each file's verdict, your line comments and change requests. Secrets are redacted and @mentions are defused in the PR text. If the code has changed since you saved the review, they tell you so rather than showing outdated decisions. `ars review <id> --json` puts the review in the capsule, so `ars pr --from capsule.json` in CI shows the same decisions.
+`review` and `pr` take a folder of the project (the current one by default) or a session id from `ars list` (that session's project). `ars pr --post` needs `GH_TOKEN` (or `GITHUB_TOKEN`). It creates one review comment on the pull request, and updates that same comment on later runs. `ars --help` lists all the flags.
+
+Both include your decisions from the desktop app: the outcome they add up to, each file's verdict, your open comments, and how many review rounds there were. Secrets are redacted and @mentions are defused in the PR text.
+
+`ars review --json > review.json` saves the whole review. Then `ars pr --from review.json` in CI shows the same thing where the transcripts aren't available. That file is not redacted, so don't share it.
 
 ## Data and trust
 
-Transcripts, SQLite databases, correction requests and revert backups can contain private code or credentials. Keep `%USERPROFILE%\.agent-review-studio`, agent session folders and environment files out of public repositories. Backups are in `.agent-review-studio/patches/`; keep them until you've checked the result.
+Transcripts, the app's SQLite database (with the file snapshots of each review round), the review text and `ars review --json` output can contain private code or credentials. Keep `%USERPROFILE%\.agent-review-studio`, agent session folders and environment files out of public repositories.
 
-A normal local review never calls an AI service. The network is only used when you push with Git, post to a PR or open an external link. Secret redaction in exports is best effort, so look over the output before sharing it.
+The app only reads your projects: Git runs read-only, and nothing in a work tree is ever written, reverted or committed by it. A normal local review never calls an AI service. The network is only used when you post to a PR or open an external link. Secret redaction in exports is best effort, so look over the output before sharing it.
 
 Only use projects and transcripts you trust. The app runs with your user permissions, and Git configuration, hooks and filters can run code. See [SECURITY.md](SECURITY.md), which also explains how to report a vulnerability.
 

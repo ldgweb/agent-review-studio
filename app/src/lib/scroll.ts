@@ -1,4 +1,4 @@
-/** Scroll an element into view and pulse it — deep-link landing feedback.
+/** Scroll an element into view and pulse it, to show where a link landed.
  * HashRouter owns the URL hash, so in-page anchors don't work; every deep
  * link resolves through getElementById instead. */
 export function scrollFlash(elementId: string): void {

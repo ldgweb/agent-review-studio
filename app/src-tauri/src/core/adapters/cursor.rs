@@ -1,4 +1,4 @@
-// Cursor adapter — reads Composer/Agent sessions from
+// Cursor adapter: reads Composer/Agent sessions from
 // Cursor's global key-value store (a SQLite file): `composerData:<id>` holds
 // the conversation header list, `bubbleId:<composerId>:<bubbleId>` holds each
 // message with its tool call. Two tool generations are supported: the legacy
@@ -70,7 +70,7 @@ fn uri_to_path(uri: &str) -> String {
     p
 }
 
-/// `// ... existing code ...` in any comment syntax — Cursor's edit_file elision marker.
+/// `// ... existing code ...` in any comment syntax: Cursor's edit_file elision marker.
 static EXISTING_CODE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\.\.\.\s*existing code\s*\.\.\.").unwrap());
 
@@ -206,7 +206,7 @@ fn pick<'a>(candidates: &[&'a str]) -> &'a str {
         .unwrap_or("")
 }
 
-/// Tool arguments — v1 bubbles carry JSON in rawArgs; v2 bubbles carry an
+/// Tool arguments: v1 bubbles carry JSON in rawArgs; v2 bubbles carry an
 /// object (or JSON) in params.
 fn tool_args(tool: &Value) -> Value {
     let raw = s(tool.get("rawArgs"));
@@ -227,7 +227,7 @@ fn tool_args(tool: &Value) -> Value {
     }
 }
 
-/// Tool result — the v2 result is an object or a JSON string.
+/// Tool result: the v2 result is an object or a JSON string.
 fn tool_result_object(tool: &Value) -> Value {
     match tool.get("result") {
         Some(r) if r.is_object() => r.clone(),
@@ -284,7 +284,7 @@ pub fn parse_composer(
         }
     }
 
-    // Only WRITE targets define the project — reads legitimately roam outside
+    // Only WRITE targets define the project: reads legitimately roam outside
     // it and would drag the common root up to the drive
     const EDIT_TOOLS: [&str; 9] = [
         "edit_file_v2",
@@ -359,7 +359,7 @@ pub fn parse_composer(
         }
     };
     // No createdAt: fall back to lastUpdatedAt, then the database file's
-    // mtime (as other adapters do) — never 1970.
+    // mtime (as other adapters do), never 1970.
     let base_iso = if created_at_ms != 0.0 {
         mtime_iso(created_at_ms)
     } else if last_updated_ms != 0.0 {
@@ -788,7 +788,7 @@ impl SessionAdapter for CursorAdapter {
             Some(m) => m,
             None => {
                 status.hint =
-                    Some("No Cursor data found — is Cursor installed on this machine?".to_string());
+                    Some("No Cursor data found. Is Cursor installed on this machine?".to_string());
                 return CollectResult {
                     sessions: Vec::new(),
                     status,
@@ -867,7 +867,7 @@ impl SessionAdapter for CursorAdapter {
 
         let mut sessions: Vec<AgentSession> = Vec::new();
         let mut composer_cache = lock(&self.composer_cache);
-        // Evict composers gone from the DB — the cache otherwise grows for
+        // Evict composers gone from the DB: the cache otherwise grows for
         // the whole process lifetime.
         let live_ids: std::collections::HashSet<String> = candidates
             .iter()

@@ -1,39 +1,46 @@
-// ars — the native CLI, on the same core the desktop app runs.
+// ars: the native CLI, on the same core the desktop app runs.
 //
-// It calls the exact router the desktop uses (app_core::api::handle) and
-// deserializes the typed sessions, so the CLI can never diverge from the app.
+// `ars .` opens the project's review in the desktop app. `ars review` and
+// `ars pr` build the same project review the desktop shows (the core's
+// review::build), so the CLI can never diverge from the app. `ars feedback`
+// is for the agent: it prints the review the desktop would copy.
 
-use agent_review_studio::app_core::{api, domain::AgentSession, paths};
-use agent_review_studio::cli::render::SavedReview;
+use agent_review_studio::app_core::{api, domain::AgentSession, git, paths, review};
 use agent_review_studio::cli::{github, render};
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::Value;
+use std::path::{Path, PathBuf};
 
 const USAGE: &str = "\
-ars — review what your AI coding agents did, from the terminal
+ars: review what your coding agents changed, before you commit
 
 USAGE
+  ars <dir>                       Open the review of <dir> in the desktop app
   ars <command> [target] [flags]
 
 COMMANDS
-  list, ls             List reviewable agent sessions (default)
-  review, r [id]       Terminal review of one session (latest when omitted)
-  pr [id]              Markdown review context for the pull request
+  open [dir]           Open the review of this project (or <dir>) in the
+                       desktop app; `ars .` is the short form
+  list, ls             List recent agent sessions (default)
+  review, r [target]   Terminal summary of the project's uncommitted changes:
+                       who wrote what, your verdicts, findings, comments
+  pr [target]          The same as Markdown for the pull request
+  feedback [dir]       For your agent: print the review of this project as
+                       instructions and start the next round (what Copy
+                       review does in the app). Ask the agent to run it.
 
 TARGET
-  A 1-based index from `ars list`, a full or short session id, or nothing
-  for the most recent session.
+  A folder in the project (default: the current one), or a session from
+  `ars list` by its id or its position (1 is the first): that session's
+  project.
 
 FLAGS
-  --json               review/pr: print the session capsule as JSON — a
-                       full-fidelity export for --from, NOT redacted: it
-                       holds the raw transcript (prompts, diffs, any secrets
-                       in them). Do not post or share it. It includes
-                       your saved review (verdicts, line comments, notes)
-                       under `review` when it was saved at the session's
-                       current revision.
-  --from <capsule>     review/pr: read the session from a capsule file
-  --project <path>     Only sessions under this project path
+  --json               review/pr: print the whole review as JSON, to read
+                       back with --from. NOT redacted: it holds diffs and
+                       transcript excerpts (prompts, any secrets in them).
+                       Do not post or share it.
+  --from <file>        review/pr: read the review from a file saved with
+                       --json
+  --project <path>     list: only sessions under this project path
   --post               pr: create/update the review comment on the PR
   --dry-run            pr: resolve the target and preview, post nothing
   --pr <n>             pr: pull request number (else resolved by branch)
@@ -108,14 +115,14 @@ fn parse(argv: &[String]) -> Args {
             "--project" => a.project = Some(flag_value(argv, &mut i, "--project")),
             s if !s.starts_with('-') => pos.push(t.clone()),
             other => {
-                eprintln!("ars: unknown flag \"{other}\" — run `ars --help`");
+                eprintln!("ars: unknown flag \"{other}\". Run `ars --help`.");
                 std::process::exit(2);
             }
         }
         i += 1;
     }
     if pos.len() > 2 {
-        eprintln!("ars: unexpected argument \"{}\" — run `ars --help`", pos[2]);
+        eprintln!("ars: unexpected argument \"{}\". Run `ars --help`.", pos[2]);
         std::process::exit(2);
     }
     a.cmd = pos.first().cloned().unwrap_or_else(|| "list".to_string());
@@ -133,195 +140,259 @@ async fn main() {
         return;
     }
 
-    // Reject unknown commands BEFORE the scan — a full source scan is not
-    // free, and a typo should not pay for it.
-    if !matches!(args.cmd.as_str(), "list" | "ls" | "review" | "r" | "pr") {
-        eprintln!("ars: unknown command \"{}\" — run `ars --help`", args.cmd);
-        std::process::exit(2);
+    // `ars open [dir]`, or a directory in place of a command (`ars .`). The
+    // desktop app builds the review, so nothing is read here.
+    if args.cmd == "open" {
+        open_in_desktop(args.target.as_deref().unwrap_or("."));
+        return;
+    }
+    if !is_command(&args.cmd) && Path::new(&args.cmd).is_dir() {
+        if let Some(extra) = &args.target {
+            eprintln!("ars: unexpected argument \"{extra}\". Run `ars --help`.");
+            std::process::exit(2);
+        }
+        open_in_desktop(&args.cmd);
+        return;
     }
 
-    // A capsule (--from) is a serialized session; it skips the machine scan.
-    let visible: Vec<AgentSession> = if args.from.is_some() {
-        Vec::new()
-    } else {
-        let value = api::handle("/sessions", "GET", None).await;
-        if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
-            eprintln!("ars: {err}");
-            std::process::exit(1);
-        }
-        if let Some(err) = value.get("storageError").and_then(|e| e.as_str()) {
-            eprintln!("ars: warning: {err}");
-        }
-        let Some(arr) = value.get("sessions").and_then(|s| s.as_array()) else {
-            eprintln!("ars: unexpected response from the core (no session list).");
-            std::process::exit(1);
-        };
-        let parsed: Vec<AgentSession> = arr
-            .iter()
-            .filter_map(|it| serde_json::from_value::<AgentSession>(it.clone()).ok())
-            .collect();
-        let skipped = arr.len() - parsed.len();
-        if skipped > 0 {
-            eprintln!(
-                "ars: warning: {skipped} session{} could not be read and {} skipped.",
-                if skipped == 1 { "" } else { "s" },
-                if skipped == 1 { "was" } else { "were" }
-            );
-        }
-        parsed
-            .into_iter()
-            .filter(|s| s.archived != Some(true))
-            .filter(|s| match &args.project {
-                Some(p) => under_project(s, p),
-                None => true,
-            })
-            .collect()
-    };
-
     match args.cmd.as_str() {
-        "list" | "ls" => print!("{}", render::render_list(&visible)),
+        "list" | "ls" => print!("{}", render::render_list(&list_sessions(&args).await)),
 
         "review" | "r" => {
-            let (s, review) = resolve_full_session(&visible, &args).await;
+            let review = load_review(&args).await;
             if args.json {
-                print_capsule(&s, &review);
+                print_json(&review);
             } else {
-                print!("{}", render::render_review(&s, &review));
+                print!("{}", render::render_review(&review));
             }
         }
 
+        "feedback" => feedback(args.target.as_deref().unwrap_or(".")).await,
+
         "pr" => {
-            let (s, review) = resolve_full_session(&visible, &args).await;
+            let review = load_review(&args).await;
             if args.json {
-                print_capsule(&s, &review);
+                print_json(&review);
                 return;
             }
-            let body = render::render_pr_markdown(&s, &review);
+            let body = render::render_pr_markdown(&review);
             if args.post || args.dry_run {
-                post_flow(&s, &body, &args).await;
+                post_flow(&review, &body, &args).await;
             } else {
                 print!("{body}");
             }
         }
 
-        _ => unreachable!("command validated before the scan"),
+        other => {
+            eprintln!("ars: unknown command \"{other}\". Run `ars --help`.");
+            std::process::exit(2);
+        }
     }
 }
 
-/// review/pr need the FULL session: from a capsule file, or picked from the
-/// summary list and then fetched by id (the list carries no hunks/timeline).
-/// Alongside it, the reviewer's saved review, classified against the
-/// revision the detail route computed for this session.
-async fn resolve_full_session(
-    visible: &[AgentSession],
-    args: &Args,
-) -> (AgentSession, SavedReview) {
-    if let Some(path) = &args.from {
-        return load_capsule(path);
+fn is_command(cmd: &str) -> bool {
+    matches!(cmd, "list" | "ls" | "review" | "r" | "pr" | "feedback")
+}
+
+/// The review for the agent on stdout, the way the agent reads it; notes
+/// about it on stderr.
+async fn feedback(dir: &str) {
+    if !Path::new(dir).is_dir() {
+        eprintln!("ars: {dir} is not a folder.");
+        std::process::exit(2);
     }
-    let summary = match pick(visible, args.target.as_deref()) {
-        Some(s) => s,
-        None => fail(args.target.as_deref()),
-    };
-    let encoded = utf8_percent_encode(&summary.session_id, NON_ALPHANUMERIC).to_string();
-    let v = api::handle(&format!("/sessions/{encoded}"), "GET", None).await;
-    if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
-        eprintln!("ars: {e}");
-        std::process::exit(1);
-    }
-    let session = match v
-        .get("session")
-        .cloned()
-        .map(serde_json::from_value::<AgentSession>)
-    {
-        Some(Ok(s)) => s,
-        _ => {
-            eprintln!("ars: unexpected response from the core (no session detail).");
+    let dir = dir.to_string();
+    let done = tokio::task::spawn_blocking(move || review::feedback(&dir))
+        .await
+        .unwrap_or_else(|_| Err("the review crashed".to_string()));
+    match done {
+        Ok(fb) if fb.text.is_empty() => {
+            println!("No review to act on: the reviewer has not asked for any change yet.");
+            if fb.undecided > 0 {
+                println!(
+                    "{} file{} still waiting for the reviewer's decision.",
+                    fb.undecided,
+                    if fb.undecided == 1 { " is" } else { "s are" }
+                );
+            }
+        }
+        Ok(fb) => {
+            print!("{}", fb.text);
+            if fb.undecided > 0 {
+                eprintln!(
+                    "ars: the review is not finished: {} file{} still undecided. Act only on what is listed.",
+                    fb.undecided,
+                    if fb.undecided == 1 { " is" } else { "s are" }
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("ars: {e}");
             std::process::exit(1);
         }
+    }
+}
+
+/// The scanned session index, filtered for `ars list` (or a target lookup).
+async fn list_sessions(args: &Args) -> Vec<AgentSession> {
+    let value = api::handle("/sessions", "GET", None).await;
+    if let Some(err) = value.get("error").and_then(|e| e.as_str()) {
+        eprintln!("ars: {err}");
+        std::process::exit(1);
+    }
+    if let Some(err) = value.get("storageError").and_then(|e| e.as_str()) {
+        eprintln!("ars: warning: {err}");
+    }
+    let Some(arr) = value.get("sessions").and_then(|s| s.as_array()) else {
+        eprintln!("ars: unexpected response from the core (no session list).");
+        std::process::exit(1);
     };
-    let revision = v["session"]["reviewRevision"].as_str();
-    let review = saved_review(&session.session_id, revision).await;
-    (session, review)
-}
-
-/// The saved review of one session through the same /approvals route the
-/// desktop uses. A store that cannot be read is reported, not hidden.
-async fn saved_review(session_id: &str, current_revision: Option<&str>) -> SavedReview {
-    let v = api::handle("/approvals", "GET", None).await;
-    if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
-        eprintln!("ars: warning: your saved review could not be read: {e}");
-        return SavedReview::None;
+    let parsed: Vec<AgentSession> = arr
+        .iter()
+        .filter_map(|it| serde_json::from_value::<AgentSession>(it.clone()).ok())
+        .collect();
+    let skipped = arr.len() - parsed.len();
+    if skipped > 0 {
+        eprintln!(
+            "ars: warning: {skipped} session{} could not be read and {} skipped.",
+            if skipped == 1 { "" } else { "s" },
+            if skipped == 1 { "was" } else { "were" }
+        );
     }
-    SavedReview::classify(v["approvals"].get(session_id), current_revision)
+    parsed
+        .into_iter()
+        .filter(|s| s.archived != Some(true))
+        .filter(|s| match &args.project {
+            Some(p) => under_project(s, p),
+            None => true,
+        })
+        .collect()
 }
 
-/// The capsule: the session, plus the saved review under "review" only when
-/// it was saved at the current revision (a stale one is never exported).
-fn capsule_value(s: &AgentSession, review: &SavedReview) -> Value {
-    let mut value = serde_json::to_value(s).unwrap_or_default();
-    if let (Some(r), Some(map)) = (review.current(), value.as_object_mut()) {
-        map.insert("review".into(), r.clone());
+/// The project review for review/pr: read from a file saved with --json,
+/// or built for the target (a folder, or the project of a session from
+/// `ars list`).
+async fn load_review(args: &Args) -> Value {
+    if let Some(path) = &args.from {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
+            eprintln!("ars: could not read {path}: {e}");
+            std::process::exit(1);
+        });
+        return parse_capsule(&text).unwrap_or_else(|e| {
+            eprintln!("ars: {path} is not a review saved with `ars review --json`: {e}");
+            std::process::exit(1);
+        });
     }
-    value
+    let dir = match args.target.as_deref() {
+        None => ".".to_string(),
+        Some(t) if Path::new(t).is_dir() => t.to_string(),
+        Some(t) => {
+            let sessions = list_sessions(args).await;
+            let s = pick(&sessions, Some(t)).unwrap_or_else(|| fail(Some(t)));
+            match &s.project_path {
+                Some(p) if Path::new(p).is_dir() => p.clone(),
+                _ => {
+                    eprintln!(
+                        "ars: session {} has no project folder on this machine.",
+                        s.session_id
+                    );
+                    std::process::exit(1);
+                }
+            }
+        }
+    };
+    let built = tokio::task::spawn_blocking(move || review::build(&dir))
+        .await
+        .unwrap_or_else(|_| Err("the review crashed".to_string()));
+    match built.map(serde_json::to_value) {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
+            eprintln!("ars: could not serialize the review: {e}");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("ars: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
-fn print_capsule(s: &AgentSession, review: &SavedReview) {
+/// A saved review: the JSON that `ars review --json` printed.
+fn parse_capsule(text: &str) -> Result<Value, String> {
+    let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if !value["project"].is_object() || !value["files"].is_array() {
+        return Err("it has no project and files".into());
+    }
+    Ok(value)
+}
+
+fn print_json(review: &Value) {
     println!(
         "{}",
-        serde_json::to_string_pretty(&capsule_value(s, review)).unwrap_or_default()
+        serde_json::to_string_pretty(review).unwrap_or_default()
     );
 }
 
-fn under_project(s: &AgentSession, root: &str) -> bool {
-    let p = match &s.project_path {
-        Some(p) => norm(p),
-        None => return false,
+/// The project a directory belongs to: its Git work tree root when there is
+/// one (so `ars .` works from any subfolder), else the directory itself.
+fn project_root_of(dir: &str) -> Result<String, String> {
+    let full = std::fs::canonicalize(dir).map_err(|e| format!("{dir}: {e}"))?;
+    // canonicalize returns a verbatim path on Windows; the sessions do not.
+    let plain = paths::plain(&full.to_string_lossy());
+    Ok(review::changes::toplevel(&plain).unwrap_or(plain))
+}
+
+/// The desktop executable shipped next to ars (installer and portable ZIP).
+fn desktop_exe() -> Option<PathBuf> {
+    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let name = format!("agent-review-studio{}", std::env::consts::EXE_SUFFIX);
+    Some(dir.join(name)).filter(|p| p.is_file())
+}
+
+fn open_in_desktop(dir: &str) {
+    let project = project_root_of(dir).unwrap_or_else(|e| {
+        eprintln!("ars: {e}");
+        std::process::exit(1);
+    });
+    let Some(exe) = desktop_exe() else {
+        eprintln!(
+            "ars: the desktop app was not found next to ars ({}). Install Agent Review Studio, or run the ars that ships with it.",
+            std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        );
+        std::process::exit(1);
     };
-    let r = norm(root);
-    p == r || p.starts_with(&format!("{r}/"))
-}
-
-/// Comparison key for a project path: forward slashes, no trailing slash,
-/// case folded only where the platform's paths are case-insensitive.
-fn norm(p: &str) -> String {
-    let slashed = p.replace('\\', "/");
-    paths::fold_case(slashed.trim_end_matches('/')).into_owned()
-}
-
-fn load_capsule(path: &str) -> (AgentSession, SavedReview) {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("ars: could not read capsule {path}: {e}");
-        std::process::exit(1);
-    });
-    parse_capsule(&text).unwrap_or_else(|e| {
-        eprintln!("ars: {path} is not a session capsule (expected `ars review <id> --json`): {e}");
-        std::process::exit(1);
-    })
-}
-
-/// A capsule is a serialized session with an optional "review", present
-/// only when a review was saved at the session's current revision.
-fn parse_capsule(text: &str) -> Result<(AgentSession, SavedReview), String> {
-    let mut value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    let review = value.as_object_mut().and_then(|m| m.remove("review"));
-    let session = serde_json::from_value::<AgentSession>(value).map_err(|e| e.to_string())?;
-    let review = review.filter(|r| {
-        let same = r["sessionId"].as_str() == Some(session.session_id.as_str());
-        if !same {
-            eprintln!("ars: warning: the capsule's review belongs to another session; ignored.");
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("--project")
+        .arg(&project)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    // Detached: the window outlives this terminal command.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    match cmd.spawn() {
+        Ok(_) => println!("ars: opening the review of {project}"),
+        Err(e) => {
+            eprintln!("ars: could not start {}: {e}", exe.display());
+            std::process::exit(1);
         }
-        same
-    });
-    let revision = review
-        .as_ref()
-        .and_then(|r| r["reviewRevision"].as_str())
-        .map(String::from);
-    let review = SavedReview::classify(review.as_ref(), revision.as_deref());
-    Ok((session, review))
+    }
 }
 
-/// Resolve a target to one session: index (1-based), full/short id, or latest.
+fn under_project(s: &AgentSession, root: &str) -> bool {
+    s.project_path
+        .as_deref()
+        .is_some_and(|p| paths::is_within(p, root))
+}
+
+/// Resolve a target to one session: index (1-based) or full/short id.
 fn pick<'a>(sessions: &'a [AgentSession], target: Option<&str>) -> Option<&'a AgentSession> {
     if sessions.is_empty() {
         return None;
@@ -331,7 +402,7 @@ fn pick<'a>(sessions: &'a [AgentSession], target: Option<&str>) -> Option<&'a Ag
         Some(t) => {
             if let Ok(idx) = t.parse::<usize>() {
                 if idx == 0 {
-                    eprintln!("ars: session indexes are 1-based — run `ars list`.");
+                    eprintln!("ars: positions in `ars list` start at 1.");
                     std::process::exit(2);
                 }
                 return sessions.get(idx - 1);
@@ -359,24 +430,30 @@ fn pick<'a>(sessions: &'a [AgentSession], target: Option<&str>) -> Option<&'a Ag
 
 fn fail(target: Option<&str>) -> ! {
     match target {
-        Some(t) => eprintln!("ars: no session matches \"{t}\" — run `ars list` to see the ids."),
+        Some(t) => eprintln!(
+            "ars: \"{t}\" is neither a folder nor a session. Run `ars list` to see the ids."
+        ),
         None => eprintln!("ars: no agent sessions found on this machine."),
     }
     std::process::exit(1);
 }
 
-async fn post_flow(s: &AgentSession, body: &str, args: &Args) {
+async fn post_flow(review: &Value, body: &str, args: &Args) {
     let token = github::gh_token();
-    // Remote + branch come from the core's git status — reuses the desktop's
-    // git module, so a capsule / CI runner without a work tree just yields none
-    // and owner/repo falls back to --repo / GITHUB_REPOSITORY.
-    let (remote_url, git_branch) = repo_remote_and_branch(&s.session_id).await;
-    let branch = git_branch.filter(|b| !b.is_empty()).or_else(|| {
-        if s.branch.is_empty() {
-            None
-        } else {
-            Some(s.branch.clone())
-        }
+    // Remote and branch from the work tree when it is here. A saved review
+    // on a CI runner without it falls back to --repo / GITHUB_REPOSITORY
+    // and the branch the review recorded.
+    let root = review["project"]["root"].as_str().unwrap_or("");
+    let (remote_url, git_branch) = if !root.is_empty() && Path::new(root).is_dir() {
+        git::remote_and_branch(root)
+    } else {
+        (None, None)
+    };
+    let branch = git_branch.or_else(|| {
+        review["project"]["branch"]
+            .as_str()
+            .filter(|b| !b.is_empty() && !b.starts_with('('))
+            .map(str::to_string)
     });
     let target = match github::resolve_target(
         args.repo.as_deref(),
@@ -399,14 +476,14 @@ async fn post_flow(s: &AgentSession, body: &str, args: &Args) {
         let num = target
             .number
             .map(|n| format!("#{n}"))
-            .unwrap_or_else(|| "(resolve by branch at post time)".to_string());
+            .unwrap_or_else(|| "(found from the branch when posting)".to_string());
         println!(
             "\n  ars pr --dry-run (nothing posted)\n  target  {}/{} · PR {}\n  branch  {}\n  token   {}\n\n  ── comment body ──\n",
             target.owner,
             target.repo,
             num,
             branch.as_deref().unwrap_or("(unknown)"),
-            if token.is_some() { "present" } else { "missing — set GH_TOKEN to post" }
+            if token.is_some() { "present" } else { "missing (set GH_TOKEN to post)" }
         );
         print!("{body}");
         return;
@@ -430,86 +507,14 @@ async fn post_flow(s: &AgentSession, body: &str, args: &Args) {
     }
 }
 
-async fn repo_remote_and_branch(session_id: &str) -> (Option<String>, Option<String>) {
-    let body = serde_json::json!({ "sessionId": session_id }).to_string();
-    let v = api::handle("/git/status", "POST", Some(body.as_str())).await;
-    (
-        v.get("remoteUrl")
-            .and_then(|x| x.as_str())
-            .map(String::from),
-        v.get("branch").and_then(|x| x.as_str()).map(String::from),
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{capsule_value, norm, parse_capsule, AgentSession, SavedReview};
-    use serde_json::{json, Value};
-
-    fn fixture_session() -> AgentSession {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/custom/expected/basic.json");
-        let text = std::fs::read_to_string(&path).expect("fixture readable");
-        let wrapper: Value = serde_json::from_str(&text).expect("fixture parses");
-        serde_json::from_value(wrapper["session"].clone()).expect("fixture is a session")
-    }
-
-    fn saved(session_id: &str) -> Value {
-        json!({
-            "sessionId": session_id,
-            "reviewRevision": "rev-1",
-            "fileStates": { "lf-1": "approved" },
-            "correctionNotes": {},
-            "lineComments": { "lf-1": [{ "anchor": "0:0", "line": 1, "text": "ok" }] },
-            "sessionDecision": "approved"
-        })
-    }
+    use super::parse_capsule;
 
     #[test]
-    fn capsule_carries_only_a_current_review_and_from_reads_it() {
-        let s = fixture_session();
-        let review = SavedReview::classify(Some(&saved(&s.session_id)), Some("rev-1"));
-        let capsule = capsule_value(&s, &review);
-        assert_eq!(capsule["review"]["sessionDecision"], "approved");
-        let (back, back_review) = parse_capsule(&capsule.to_string()).expect("capsule parses");
-        assert_eq!(back.session_id, s.session_id);
-        assert_eq!(back_review, review);
-        let md = agent_review_studio::cli::render::render_pr_markdown(&back, &back_review);
-        assert!(md.contains("**Session decision:** Approved"), "{md}");
-
-        // A stale review is never exported.
-        let stale = SavedReview::classify(Some(&saved(&s.session_id)), Some("rev-2"));
-        assert!(capsule_value(&s, &stale).get("review").is_none());
-    }
-
-    #[test]
-    fn old_capsules_and_foreign_reviews_carry_no_review() {
-        let s = fixture_session();
-        let old = serde_json::to_string(&s).unwrap();
-        let (_, review) = parse_capsule(&old).expect("old capsule parses");
-        assert_eq!(review, SavedReview::None);
-
-        let mut foreign = serde_json::to_value(&s).unwrap();
-        foreign["review"] = saved("another-session");
-        let (_, review) = parse_capsule(&foreign.to_string()).expect("capsule parses");
-        assert_eq!(review, SavedReview::None);
-    }
-
-    #[test]
-    fn project_keys_normalize_separators_and_trailing_slashes() {
-        assert_eq!(norm("C:\\dev\\app\\"), norm("C:/dev/app"));
-        assert_eq!(norm("/home/a/app/"), "/home/a/app");
-    }
-
-    #[cfg(any(windows, target_os = "macos"))]
-    #[test]
-    fn project_keys_ignore_case_where_paths_do() {
-        assert_eq!(norm("C:/Dev/App"), "c:/dev/app");
-    }
-
-    #[cfg(not(any(windows, target_os = "macos")))]
-    #[test]
-    fn project_keys_keep_case_on_linux() {
-        assert_ne!(norm("/home/a/App"), norm("/home/a/app"));
+    fn capsules_are_review_json() {
+        assert!(parse_capsule(r#"{"project":{"name":"x"},"files":[]}"#).is_ok());
+        assert!(parse_capsule(r#"{"sessionId":"old session capsule"}"#).is_err());
+        assert!(parse_capsule("not json").is_err());
     }
 }
