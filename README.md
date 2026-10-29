@@ -2,12 +2,12 @@
 
 [![CI](https://github.com/ldgweb/agent-review-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/ldgweb/agent-review-studio/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
-![Platform: Windows](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)
+![Platforms: Windows, macOS, Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 ![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)
 
 A desktop app for reviewing what a coding agent changed in your project, before you commit. Above every change it shows why the agent made it. You decide what to keep, and your decisions become a review the agent can act on.
 
-**Windows beta · React + TypeScript + Tauri/Rust · no account, no cloud**
+**Beta for Windows, macOS and Linux · React + TypeScript + Tauri/Rust · no account, no cloud**
 
 ![A project's review: every change with the agent's reason above it, a comment and a suggested change on its lines](.github/assets/review.png)
 
@@ -27,10 +27,10 @@ It's far from finished, but that's the goal.
 
 ## Quick start
 
-1. Download the latest Windows build from [Releases](https://github.com/ldgweb/agent-review-studio/releases), or [build it from source](#build-from-source).
+1. Download the latest build for your system from [Releases](https://github.com/ldgweb/agent-review-studio/releases), or [build it from source](#build-from-source).
 2. Start the app and click **Try the sample tour**. It sets up a separate sandbox repository with two sample sessions, so you can try everything without touching your own projects.
 3. Then use it with your own agent. Claude Code, Codex, Cursor, VS Code Copilot, Gemini CLI and `ars/v1` folders are picked up from their default locations ([details](#where-sessions-come-from)). For Aider, add your project folders under **Settings → Session sources**.
-4. While you work, run `ars .` in the project folder (any subfolder works). The app opens, or comes to the front, on that project's review. The installer doesn't add `ars` to your `PATH`; see [Install](#install-windows).
+4. While you work, run `ars .` in the project folder (any subfolder works). The app opens, or comes to the front, on that project's review. On Windows and macOS, `ars` needs one step to be on your `PATH`; see [Install](#install).
 
 ## The everyday loop
 
@@ -75,7 +75,7 @@ When the agent is done, run `ars .` again. Changed files open on **Since last re
 
 ## Try it in five minutes
 
-The sample tour isn't a mock-up: it's a real Git repository in `%USERPROFILE%\.agent-review-studio\demo\demo-shop` with two sample sessions. Nothing you do there touches your own projects.
+The sample tour isn't a mock-up: it's a real Git repository in `~/.agent-review-studio/demo/demo-shop` (`%USERPROFILE%\.agent-review-studio\demo\demo-shop` on Windows) with two sample sessions. Nothing you do there touches your own projects.
 
 1. Click **Try the sample tour** on the welcome screen (or **Settings → Data → Sample tour → Install / reset**). The review of the sandbox project opens.
 2. Every block of changes has a line on top with the sample agent's reason for it. Click the reason to read your request and the agent's words in full, right there. The agent's whole session (your requests, its report, what it ran) opens from the bottom of the file list.
@@ -85,12 +85,14 @@ The sample tour isn't a mock-up: it's a real Git repository in `%USERPROFILE%\.a
 4. Decide: press `a` on the files that look fine and `r` on one you'd throw away. In `discount.ts`, hover a line and click the speech bubble in the margin to write a comment, say *"remove this console.log"*. Or click the pencil next to it to suggest code: write the line as you want it. The suggestion shows up in the diff, under the line it replaces. `Ctrl+Enter` saves. A comment marks its change as "change requested". The ✓ / ✕ on a block decide just that change.
 5. The retry files come from a second sample you **already reviewed once**: `src/api/client.ts` is still approved, and `src/api/retry.ts` opens on **Since last review**, which shows only the cap the agent added after your comment. Your comment from that round sits above the diff, saying whether the agent changed its code.
 6. When every file has a verdict, click **Copy review**. It is copied, ready to paste: what you rejected is in it as UNDO or DELETE, for the agent to carry out. **Your review** shows it, and lets you edit it, at any point. The sandbox's files stay exactly as they were.
-7. In PowerShell, try the CLI on the same project (from source, run `npm run ars -- <command>` in `app/`):
+7. In a terminal, try the CLI on the same project (from source, run `npm run ars -- <command>` in `app/`). In PowerShell:
 
    ```powershell
    ars review "$env:USERPROFILE\.agent-review-studio\demo\demo-shop"
    ars pr "$env:USERPROFILE\.agent-review-studio\demo\demo-shop"
    ```
+
+   On macOS and Linux the folder is `~/.agent-review-studio/demo/demo-shop`.
 
 **Install / reset** in Settings puts the tour back to the start.
 
@@ -129,7 +131,7 @@ The app only reads files the agents already write on your machine. These are the
 | --- | --- | --- |
 | Claude Code | `~/.claude/projects` | none |
 | Codex | `~/.codex/sessions` | none |
-| Cursor | Cursor's `User/globalStorage` folder (`%APPDATA%\Cursor\…` on Windows) | none |
+| Cursor | Cursor's `User/globalStorage` folder (`%APPDATA%\Cursor\…` on Windows, `~/Library/Application Support/Cursor/…` on macOS, `~/.config/Cursor/…` on Linux) | none |
 | VS Code Copilot | VS Code's `User/workspaceStorage` folder | none |
 | Gemini CLI | `~/.gemini/tmp` (saved chats and checkpoints) | `/chat save` or `--checkpointing` |
 | Aider | `.aider.chat.history.md` inside each project | add the project folders |
@@ -143,14 +145,19 @@ Agents change their transcript formats from time to time. If an agent you use st
 
 | Platform | Status |
 | --- | --- |
-| Windows x64 | Supported, with release builds |
-| Linux, macOS | The core and CLI build and pass their tests in CI, but the desktop app isn't packaged or tested there yet. Help with testing is welcome. |
+| Windows x64 | Supported: the system I use and test it on every day |
+| macOS (Apple silicon and Intel) | Experimental: built and tested by CI, not yet tried on a real Mac |
+| Linux x64 | Experimental: built and tested by CI, not yet tried on a real machine |
 
-## Install (Windows)
+If you use ARS on macOS or Linux, I'd like to hear how it went: [issue #8](https://github.com/ldgweb/agent-review-studio/issues/8) collects what works and what doesn't.
 
-Download the installer or the portable ZIP from [GitHub Releases](https://github.com/ldgweb/agent-review-studio/releases). If there's no release yet, [build from source](#build-from-source).
+## Install
 
-- **Installer:** the NSIS `*-setup.exe` installs the desktop app and the CLI for the current user.
+Download the package for your system from [GitHub Releases](https://github.com/ldgweb/agent-review-studio/releases), or [build from source](#build-from-source). Every file can be checked against `SHA256SUMS.txt` in the release. Builds aren't signed yet, so your system may warn about an unknown developer.
+
+### Windows
+
+- **Installer:** `agent-review-studio_<version>_x64-setup.exe` installs the desktop app and the CLI for the current user. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**.
 - **Portable:** extract the ZIP and run `agent-review-studio.exe`, or `ars.exe --help` in a terminal.
 - The CLI sits next to the desktop executable, and `ars .` starts the `agent-review-studio.exe` beside it. The installer doesn't change `PATH`; to run `ars` from any terminal, add the install folder to your user `PATH` once (PowerShell, then open a new terminal):
 
@@ -160,14 +167,47 @@ Download the installer or the portable ZIP from [GitHub Releases](https://github
 
   For the portable build, use the folder you extracted it to.
 - **Requirements:** Windows x64, the Microsoft Edge WebView2 Runtime, and Git on `PATH` (the review reads the changes from it).
-- The session index, decisions, settings and the file snapshots of each review round go to `%USERPROFILE%\.agent-review-studio`, for the portable build too. Window position and the WebView2 cache live in `com.agentreviewstudio.desktop` folders under `%APPDATA%` and `%LOCALAPPDATA%`.
-- Builds aren't signed yet, so Windows may warn about an unknown publisher. You can check downloads against `SHA256SUMS.txt` in the release.
+
+### macOS
+
+- Open `agent-review-studio_<version>_universal.dmg` and drag the app to Applications. It runs on Apple silicon and Intel Macs.
+- The app isn't signed by Apple. The first time, allow it in **System Settings → Privacy & Security**, or run:
+
+  ```sh
+  xattr -dr com.apple.quarantine "/Applications/Agent Review Studio.app"
+  ```
+
+- The CLI is inside the app. To run `ars` from any terminal, link it once:
+
+  ```sh
+  sudo ln -sf "/Applications/Agent Review Studio.app/Contents/MacOS/ars" /usr/local/bin/ars
+  ```
+
+- **Requirements:** macOS 10.15 or later, and Git (`xcode-select --install` installs it).
+
+### Linux
+
+- **Debian, Ubuntu:** `sudo apt install ./agent-review-studio_<version>_amd64.deb`
+- **Fedora, openSUSE:** `sudo dnf install ./agent-review-studio-<version>-1.x86_64.rpm` (or `zypper install`)
+- Both packages put `agent-review-studio` and `ars` in `/usr/bin`, so `ars .` works right away.
+- **AppImage:** make it executable (`chmod +x`) and run it. It holds the app only: for the `ars` CLI, use the deb or rpm package.
+- **Requirements:** x64, WebKitGTK 4.1 (the packages install it), and Git.
+
+### Where things are kept
+
+The session index, decisions, settings and the file snapshots of each review round go to `~/.agent-review-studio` (`%USERPROFILE%\.agent-review-studio` on Windows), for the portable build too. Window position and the web view's cache live in a `com.agentreviewstudio.desktop` folder in the system's app data.
 
 There's no auto-update: download new versions by hand.
 
 ## Build from source
 
-You'll need Node.js 22.12 or newer; Rust via rustup with the MSVC toolchain (the version pinned in `app/src-tauri/rust-toolchain.toml` installs itself); Visual Studio Build Tools with **Desktop development with C++** and a Windows SDK; Git; and WebView2. Restart the terminal after installing the toolchains.
+You'll need Node.js 22.12 or newer, Git, and Rust via rustup (the version pinned in `app/src-tauri/rust-toolchain.toml` installs itself). Then, for your system:
+
+- **Windows:** the MSVC toolchain, Visual Studio Build Tools with **Desktop development with C++** and a Windows SDK, and WebView2.
+- **macOS:** the Xcode Command Line Tools (`xcode-select --install`).
+- **Linux (Debian, Ubuntu):** `sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libsoup-3.0-dev build-essential pkg-config`. Other distributions: see [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+Restart the terminal after installing the toolchains.
 
 From `app/`:
 
@@ -184,7 +224,7 @@ npm run tauri:dev
 npm run tauri -- build --no-bundle --ci -- --locked
 ```
 
-The output goes to `app/src-tauri/target/release/`: `agent-review-studio.exe`, `ars.exe` and, for bundled builds, `bundle/nsis/`.
+The output goes to `app/src-tauri/target/release/`: `agent-review-studio` and `ars` (with `.exe` on Windows) and, for bundled builds, the packages under `bundle/`.
 
 ## Project layout
 
@@ -209,7 +249,7 @@ cargo clippy --release --locked --all-targets --manifest-path src-tauri/Cargo.to
 cargo test --release --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-The Rust audit looks up every registry package in `Cargo.lock` on OSV. It fails only on a vulnerability in a package the Windows build ships, unless `app/scripts/audit-allowlist.json` says why it doesn't affect the app. Informational advisories (unmaintained, unsound) and packages that only other platforms use are listed but don't fail it. Both audits need internet access. Three Rust smoke tests are ignored by default because they read or change real user data; the normal tests only use synthetic fixtures and temporary repositories.
+The Rust audit looks up every registry package in `Cargo.lock` on OSV. It fails only on a vulnerability in a package a release build ships (Windows, macOS or Linux), unless `app/scripts/audit-allowlist.json` says why it doesn't affect the app. Informational advisories (unmaintained, unsound) are listed but don't fail it. Both audits need internet access. Three Rust smoke tests are ignored by default because they read or change real user data; the normal tests only use synthetic fixtures and temporary repositories.
 
 ## CLI
 
@@ -224,7 +264,7 @@ ars pr [dir] --dry-run      # show which PR it would post to; post nothing
 ars pr [dir] --post         # actually post a PR comment
 ```
 
-`feedback` prints exactly what **Copy review** copies in the app (your edited text, if you edited it) and records the round the same way. When you have not asked for anything yet, it says so and records nothing. The agent needs `ars` on its `PATH` (see [Install](#install-windows)).
+`feedback` prints exactly what **Copy review** copies in the app (your edited text, if you edited it) and records the round the same way. When you have not asked for anything yet, it says so and records nothing. The agent needs `ars` on its `PATH` (see [Install](#install)).
 
 `review` and `pr` take a folder of the project (the current one by default) or a session id from `ars list` (that session's project). `ars pr --post` needs `GH_TOKEN` (or `GITHUB_TOKEN`). It creates one review comment on the pull request, and updates that same comment on later runs. `ars --help` lists all the flags.
 
@@ -234,7 +274,7 @@ Both include your decisions from the desktop app: the outcome they add up to, ea
 
 ## Data and trust
 
-Transcripts, the app's SQLite database (with the file snapshots of each review round), the review text and `ars review --json` output can contain private code or credentials. Keep `%USERPROFILE%\.agent-review-studio`, agent session folders and environment files out of public repositories.
+Transcripts, the app's SQLite database (with the file snapshots of each review round), the review text and `ars review --json` output can contain private code or credentials. Keep `~/.agent-review-studio`, agent session folders and environment files out of public repositories.
 
 The app only reads your projects: Git runs read-only, and nothing in a work tree is ever written, reverted or committed by it. A normal local review never calls an AI service. The network is only used when you post to a PR or open an external link. Secret redaction in exports is best effort, so look over the output before sharing it.
 

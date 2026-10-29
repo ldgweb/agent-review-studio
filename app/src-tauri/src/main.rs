@@ -75,10 +75,23 @@ fn main() {
                 .title("Agent Review Studio")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(1000.0, 640.0)
-                // The app draws its own title bar: no browser-window chrome.
-                .decorations(false)
                 // No Ctrl+wheel / Ctrl+± page zoom: this is an app, not a page.
                 .zoom_hotkeys_enabled(false);
+            // The app draws its own title bar. On macOS the system's window
+            // buttons stay, over the left end of it; elsewhere the bar has
+            // its own.
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true)
+                    // Centered in the app's 40px bar
+                    .traffic_light_position(tauri::LogicalPosition::new(14.0, 13.0));
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                builder = builder.decorations(false);
+            }
             if let Some(project) = &launch_project {
                 // Runs before the app's scripts, so the router starts on the
                 // project route. Only an empty route is replaced.

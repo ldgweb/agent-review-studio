@@ -1,6 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReviewFile } from '../../types/review';
+import { platform } from '../../lib/desktop';
 import { useDismiss } from '../../state/useDismiss';
 
 // A right-click on a file in the list: the usual editor actions on it.
@@ -18,8 +19,7 @@ const MENU_WIDTH = 240;
 const MENU_HEIGHT = 170;
 const EDGE = 8;
 
-const ua = navigator.userAgent;
-const REVEAL_LABEL = ua.includes('Windows') ? 'Show in File Explorer' : ua.includes('Mac') ? 'Show in Finder' : 'Show in folder';
+const REVEAL_LABEL = { windows: 'Show in File Explorer', macos: 'Show in Finder', linux: 'Show in folder' }[platform];
 
 interface FileMenuProps {
   file: ReviewFile;

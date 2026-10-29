@@ -1,6 +1,6 @@
 [package]
 name = "agent-review-studio"
-version = "0.10.0"
+version = "0.11.0"
 description = "Human review of what coding agents change in a project, before commit"
 authors = ["Lucio (ldgweb)"]
 edition = "2021"
