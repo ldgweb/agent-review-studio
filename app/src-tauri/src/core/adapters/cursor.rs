@@ -17,8 +17,7 @@ use std::collections::HashSet;
 use std::sync::{Mutex, MutexGuard};
 
 use super::super::domain::{
-    AgentSession, DiffHunk, DiffLine, DiffLineKind, RawFile, RawSession, TimelineEvent,
-    TimelineEventDraft, TimelineEventKind,
+    AgentSession, RawFile, RawSession, TimelineEvent, TimelineEventDraft, TimelineEventKind,
 };
 use super::super::normalize::{content_diff, first_line, normalize, truncate, TEST_COMMAND};
 use super::super::paths::fold_case;
@@ -109,70 +108,26 @@ fn file_for(
     idx
 }
 
-/// Record an edit_file code_edit: segments between elision markers become add-only hunks.
+/// Count an edit_file code_edit: the lines between elision markers are added.
 fn apply_code_edit(file: &mut RawFile, code_edit: &str) {
-    let mut hunk_lines: Vec<DiffLine> = Vec::new();
     for line in code_edit.split('\n') {
         if EXISTING_CODE.is_match(line) {
-            if !hunk_lines.is_empty() {
-                let mut lines = std::mem::take(&mut hunk_lines);
-                lines.truncate(120);
-                file.hunks.push(DiffHunk {
-                    header: format!("@@ {} @@", file.path),
-                    lines,
-                });
-            }
             continue;
         }
         file.added += 1;
         file.added_lines.push(line.to_string());
-        hunk_lines.push(DiffLine {
-            kind: DiffLineKind::Add,
-            text: line.to_string(),
-            old_line: None,
-            new_line: None,
-        });
-    }
-    if !hunk_lines.is_empty() {
-        hunk_lines.truncate(120);
-        file.hunks.push(DiffHunk {
-            header: format!("@@ {} @@", file.path),
-            lines: hunk_lines,
-        });
     }
 }
 
 fn apply_replace(file: &mut RawFile, old_string: &str, new_string: &str) {
-    let mut lines: Vec<DiffLine> = Vec::new();
     if !old_string.is_empty() {
-        for line in old_string.split('\n') {
-            file.removed += 1;
-            lines.push(DiffLine {
-                kind: DiffLineKind::Del,
-                text: line.to_string(),
-                old_line: None,
-                new_line: None,
-            });
-        }
+        file.removed += old_string.split('\n').count() as i64;
     }
     if !new_string.is_empty() {
         for line in new_string.split('\n') {
             file.added += 1;
             file.added_lines.push(line.to_string());
-            lines.push(DiffLine {
-                kind: DiffLineKind::Add,
-                text: line.to_string(),
-                old_line: None,
-                new_line: None,
-            });
         }
-    }
-    if !lines.is_empty() {
-        lines.truncate(120);
-        file.hunks.push(DiffHunk {
-            header: format!("@@ {} @@", file.path),
-            lines,
-        });
     }
 }
 
@@ -379,7 +334,6 @@ pub fn parse_composer(
     let mut commands_run: i64 = 0;
     let mut tests_run: i64 = 0;
     let mut tests_failed: i64 = 0;
-    let mut errors: i64 = 0;
     let mut files_analyzed: i64 = 0;
     let mut timeline: Vec<TimelineEvent> = Vec::new();
     let mut event_seq: usize = 0;
@@ -430,9 +384,6 @@ pub fn parse_composer(
         let args = tool_args(tool);
         let target = target_of(&args);
         let failed = s(tool.get("status")) == "error";
-        if failed {
-            errors += 1;
-        }
 
         if name == "edit_file_v2" && !target.is_empty() {
             // v2 edits carry no patch: the result references content-addressed
@@ -446,7 +397,6 @@ pub fn parse_composer(
             let idx = file_for(&mut files, &known_paths, &root, &target, created);
             if let (Some(before), Some(after)) = (before, after) {
                 let diff = content_diff(&before, &after);
-                files[idx].hunks.extend(diff.hunks);
                 files[idx].added += diff.added;
                 files[idx].removed += diff.removed;
                 files[idx].added_lines.extend(diff.added_lines);
@@ -682,7 +632,6 @@ pub fn parse_composer(
         commands_run,
         tests_run,
         tests_failed,
-        errors,
         duration_minutes,
     })
 }

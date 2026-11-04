@@ -1,8 +1,7 @@
 {
-  "sessionHash": "b5a0491572f5f13994c45ed82a1bd3bce97fb4089dc313766b131c85479e5818",
+  "sessionHash": "90c82310271d823c99e88f93b78a125001e260b465971304b85cca283ec1d42b",
   "session": {
     "sessionId": "cursor-1234-5678",
-    "source": "live",
     "timestamp": "2026-02-26T00:00:00.000Z",
     "agent": "cursor",
     "agentLabel": "Cursor",
@@ -16,7 +15,6 @@
       "Create shared stylesheet",
       "Update profile template"
     ],
-    "status": "needs-review",
     "outcome": "Done — the profile template now uses the shared stylesheet and grid layout; the legacy table markup is gone.",
     "stats": {
       "filesAnalyzed": 1,
@@ -28,109 +26,22 @@
       "testsFailed": 1,
       "durationMinutes": 8
     },
-    "summary": {
-      "text": "Ingested from a live Cursor transcript. The agent changed 2 files (+9 −1) across (root), ran 1 command and 1 test run.",
-      "impactedAreas": [
-        "(root)"
-      ],
-      "riskWarnings": [
-        "1 tool call failed during the session."
-      ]
-    },
-    "systemAreas": [
-      {
-        "id": "area--root-",
-        "label": "(root)",
-        "critical": false,
-        "dependsOn": []
-      }
-    ],
     "files": [
       {
         "id": "lf-1",
         "path": "shared.css",
         "changeType": "created",
-        "language": "css",
         "linesAdded": 5,
         "linesRemoved": 0,
-        "areaId": "area--root-",
-        "riskFlags": [],
-        "summary": "Created — +5 −0 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ shared.css @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": ".account {"
-              },
-              {
-                "kind": "add",
-                "text": "  display: grid;"
-              },
-              {
-                "kind": "add",
-                "text": "  gap: 12px;"
-              },
-              {
-                "kind": "add",
-                "text": "}"
-              },
-              {
-                "kind": "add",
-                "text": ""
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       },
       {
         "id": "lf-2",
         "path": "profile.phtml",
         "changeType": "modified",
-        "language": "phtml",
         "linesAdded": 4,
         "linesRemoved": 1,
-        "areaId": "area--root-",
-        "riskFlags": [],
-        "summary": "Modified — +4 −1 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ profile.phtml @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "<link rel=\"stylesheet\" href=\"shared.css\">"
-              }
-            ]
-          },
-          {
-            "header": "@@ profile.phtml @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "<div class=\"account\">"
-              },
-              {
-                "kind": "add",
-                "text": ""
-              }
-            ]
-          },
-          {
-            "header": "@@ profile.phtml @@",
-            "lines": [
-              {
-                "kind": "del",
-                "text": "<table class=old>"
-              },
-              {
-                "kind": "add",
-                "text": "<section class=account-grid>"
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       }
     ],
     "timeline": [
@@ -211,7 +122,6 @@
         "rationale": "2 files changed, +9 lines added in one session.",
         "contributingFileIds": []
       }
-    ],
-    "findings": []
+    ]
   }
 }

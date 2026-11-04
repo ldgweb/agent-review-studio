@@ -159,7 +159,7 @@ function ProjectCard({ project: p, onOpen, onHide }: { project: ProjectRow; onOp
         </span>
         {p.sessions.length > 0 && (
           <span className="project-sessions">
-            {p.sessions.slice(0, 3).map((s) => (
+            {p.sessions.map((s) => (
               <span key={s.sessionId} className="project-session">
                 <AgentBadge agent={s.agent} label={s.agentLabel} />
                 <span className="muted">{s.declaredGoal}</span>

@@ -1,8 +1,7 @@
 {
-  "sessionHash": "d17c5568a6a3588ae15d8801ae9986a6afa9d0c74bfb9996df79773183ddcd0d",
+  "sessionHash": "2b06a6e27829b133f75e234452ed5e989a57f51178bc21625b9fd205a36857da",
   "session": {
     "sessionId": "aider-acme-shop-5963150e-0-2026-03-08",
-    "source": "live",
     "timestamp": "2026-03-08T14:00:00.000Z",
     "agent": "aider",
     "agentLabel": "Aider",
@@ -13,7 +12,6 @@
     "originalPrompt": "Rename the checkout helper and update its callers",
     "declaredGoal": "Rename the checkout helper and update its callers",
     "initialPlan": [],
-    "status": "needs-review",
     "outcome": "All 12 checkout tests passed after the rename, callers updated in both modules.",
     "stats": {
       "filesAnalyzed": 0,
@@ -25,45 +23,22 @@
       "testsFailed": 0,
       "durationMinutes": 1
     },
-    "summary": {
-      "text": "Ingested from a live Aider transcript. The agent changed 2 files (+0 −0) across src, ran 1 command and 1 test run.",
-      "impactedAreas": [
-        "src"
-      ],
-      "riskWarnings": []
-    },
-    "systemAreas": [
-      {
-        "id": "area-src",
-        "label": "src",
-        "critical": false,
-        "dependsOn": []
-      }
-    ],
     "files": [
       {
         "id": "lf-1",
         "path": "src/checkout/helpers.py",
         "changeType": "modified",
-        "language": "py",
         "linesAdded": 0,
         "linesRemoved": 0,
-        "areaId": "area-src",
-        "riskFlags": [],
-        "summary": "Modified — +0 −0 lines in this session.",
-        "hunks": []
+        "riskFlags": []
       },
       {
         "id": "lf-2",
         "path": "src/checkout/views.py",
         "changeType": "modified",
-        "language": "py",
         "linesAdded": 0,
         "linesRemoved": 0,
-        "areaId": "area-src",
-        "riskFlags": [],
-        "summary": "Modified — +0 −0 lines in this session.",
-        "hunks": []
+        "riskFlags": []
       }
     ],
     "timeline": [
@@ -129,7 +104,6 @@
         "rationale": "2 files changed, +0 lines added in one session.",
         "contributingFileIds": []
       }
-    ],
-    "findings": []
+    ]
   }
 }

@@ -1,18 +1,24 @@
 import { useState } from 'react';
-import type { ReviewHunk, Verdict } from '../../types/review';
+import type { EditStep, ReviewHunk, SessionContext, Verdict } from '../../types/review';
 import { IconAlert, IconCheck, IconX } from '../../components/icons';
+import { formatTime } from '../../lib/format';
+import { afterEdit, outcomeOf } from '../../lib/history';
 import { hunkRange, hunkSection } from '../../lib/review';
 
 // The line above every change: where it is, why the agent made it (one
-// line; a click opens the request and the agent's words right under it),
+// line; a click opens, right under it, the request and the change step by
+// step: the edits that wrote it and what the agent ran after),
 // and the decision on this one change. A comment on any of its lines asks
 // for a change, so there are only two buttons. A file with a single change
 // has none here: the file's own buttons decide it.
 
 interface HunkHeaderProps {
   hunk: ReviewHunk;
+  /** The file the change is in */
+  path: string;
   verdict?: Verdict;
-  hasSessions: boolean;
+  /** The project's sessions: the steps of each change come from them */
+  sessions: SessionContext[];
   collapsed: boolean;
   onToggleCollapsed?: () => void;
   /** Places the same change appears, when more than one */
@@ -28,10 +34,59 @@ function firstLine(text: string, max: number): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
+/** This change, step by step: each recorded edit that wrote its lines with
+ * the agent's words before it, then what the agent ran right after */
+function ChangeStory({ steps, total, sessions, path }: { steps: EditStep[]; total: number; sessions: SessionContext[]; path: string }) {
+  const last = steps[steps.length - 1];
+  const session = (id: string) => sessions.find((s) => s.sessionId === id);
+  const after = afterEdit(session(last.sessionId)?.timeline ?? [], last, path);
+  return (
+    <>
+      <div className="why-label">How this change came about</div>
+      <ol className="change-story">
+        {steps.map((st, i) => (
+          <li key={st.eventId ?? `${st.sessionId}-${i}`}>
+            <span className="story-time">{formatTime(st.timestamp)}</span>
+            <span className="story-body">
+              <span className="story-what">
+                {session(st.sessionId)?.agentLabel ?? 'The agent'} wrote {steps.length > 1 ? `${st.lines} of ${total} lines` : 'it'}
+                {st.rationale ? ', after saying:' : ''}
+              </span>
+              {st.rationale && <span className="story-said">{st.rationale}</span>}
+            </span>
+          </li>
+        ))}
+        {after.map((e) => {
+          const outcome = outcomeOf(e);
+          return (
+            <li key={e.id} className={e.kind === 'error' ? 'is-error' : undefined}>
+              <span className="story-time">{formatTime(e.timestamp)}</span>
+              <span className="story-body">
+                <span className="story-what">
+                  {e.kind === 'test-run' ? 'Ran the tests' : e.kind === 'error' ? 'Error' : 'Ran'}
+                  {outcome && <span className={`story-outcome ${outcome.tone}`}>{outcome.text}</span>}
+                </span>
+                <code className="story-cmd">{e.command ?? e.title}</code>
+              </span>
+            </li>
+          );
+        })}
+        {after.every((e) => e.kind !== 'test-run') && (
+          <li>
+            <span className="story-time" />
+            <span className="story-body faint">No test run recorded after this change.</span>
+          </li>
+        )}
+      </ol>
+    </>
+  );
+}
+
 export function HunkHeader({
   hunk,
+  path,
   verdict,
-  hasSessions,
+  sessions,
   collapsed,
   onToggleCollapsed,
   groupSize,
@@ -40,6 +95,7 @@ export function HunkHeader({
   showVerdict,
 }: HunkHeaderProps) {
   const [open, setOpen] = useState(false);
+  const hasSessions = sessions.length > 0;
   const section = hunkSection(hunk.header);
   const range = hunkRange(hunk);
   const o = hunk.origin;
@@ -64,7 +120,7 @@ export function HunkHeader({
             className={`hunk-why${o.kind === 'none' ? ' unrecorded' : ''}${open ? ' open' : ''}`}
             disabled={!canOpen}
             onClick={() => setOpen(!open)}
-            title={canOpen ? (open ? 'Hide' : 'Why this change: the request and the agent’s words') : undefined}
+            title={canOpen ? (open ? 'Hide' : 'Why this change: your request, the agent’s words, and what it ran after') : undefined}
           >
             {o.kind === 'none' && <IconAlert size={11} />} {why}
           </button>
@@ -132,16 +188,11 @@ export function HunkHeader({
                   <p className="why-prompt">{o.prompt}</p>
                 </>
               )}
-              {o.rationale && (
-                <>
-                  <div className="why-label">{o.agentLabel ?? 'The agent'}, right before this edit</div>
-                  <p>{o.rationale}</p>
-                </>
-              )}
+              {o.steps && <ChangeStory steps={o.steps} total={o.total} sessions={sessions} path={path} />}
               {o.kind === 'partial' && (
                 <p className="faint">
-                  {o.matched} of {o.total} changed lines come from this edit; the others were changed afterwards, outside the recorded
-                  edits.
+                  {o.matched} of {o.total} changed lines come from the edits above; the others were changed afterwards, outside the
+                  recorded edits.
                 </p>
               )}
             </>

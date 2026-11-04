@@ -2,11 +2,10 @@ import { useMemo, useState } from 'react';
 import type { ProjectReview, SessionContext } from '../../types/review';
 import { IconX } from '../../components/icons';
 import { formatDateTime, formatRelative } from '../../lib/format';
-import { TimelinePanel } from './TimelinePanel';
 
-// The agent's side of the story, on request: what you asked, what it
-// reported, and (folded) what it ran. Closed by default: the reason for
-// each change already sits above that change in the diff.
+// The agent's side of the story, on request: what you asked and what it
+// reported. Closed by default: the reason for each change, and what the
+// agent did for it step by step, sit above that change in the diff.
 
 function Expandable({ text, max = 320, className }: { text: string; max?: number; className?: string }) {
   const [open, setOpen] = useState(false);
@@ -57,12 +56,6 @@ function SessionBlock({ review, session }: { review: ProjectReview; session: Ses
           <div className="why-label">What it reported</div>
           <Expandable text={report} />
         </>
-      )}
-      {session.timeline.length > 0 && (
-        <details className="session-timeline">
-          <summary>What it did ({session.timeline.length} steps)</summary>
-          <TimelinePanel timeline={session.timeline} />
-        </details>
       )}
     </section>
   );

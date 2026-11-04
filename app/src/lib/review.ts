@@ -140,12 +140,6 @@ function liveHunks(files: ReviewFile[]): Map<string, { file: ReviewFile; hunk: R
   return map;
 }
 
-/** Comments on code that still exists */
-export function currentComments(state: ReviewState, files: ReviewFile[]): ReviewComment[] {
-  const live = liveHunks(files);
-  return state.comments.filter((c) => live.has(c.hunkId));
-}
-
 /** This round's comments whose code changed since (GitHub's "outdated") */
 export function outdatedComments(state: ReviewState, files: ReviewFile[]): ReviewComment[] {
   const live = liveHunks(files);
@@ -278,6 +272,34 @@ export function groupFiles(files: ReviewFile[], review: ProjectReview): FileGrou
 /** The numbered items of a review text (an edited one, say) */
 export function countItems(text: string): number {
   return text.split('\n').filter((l) => /^\d+\. /.test(l)).length;
+}
+
+// --- finishing a review ------------------------------------------------------
+
+/** One argument, kept literal by the shell a terminal opens by default:
+ * PowerShell on Windows, a POSIX shell elsewhere. PowerShell also takes the
+ * typographic single quotes as quotes, so those are doubled too. */
+export function shellQuote(text: string, shell: 'powershell' | 'posix'): string {
+  return shell === 'powershell' ? `'${text.replace(/['‘’‚‛]/g, (q) => q + q)}'` : `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+/** The commands that commit everything the review covered: every
+ * uncommitted change, new files included, as the review showed them. The
+ * message becomes one line. Run from anywhere: it starts in the project. */
+export function commitCommands(root: string, message: string, shell: 'powershell' | 'posix'): string {
+  const subject = message.replace(/\s+/g, ' ').trim();
+  return [`cd ${shellQuote(root, shell)}`, 'git add -A', `git commit -m ${shellQuote(subject, shell)}`].join('\n');
+}
+
+/** What the agent gets when every change is approved and it should commit */
+export function approvalText(projectName: string): string {
+  return [
+    `# Review of your changes in ${projectName}`,
+    '',
+    'Everything is approved: change nothing.',
+    'Commit all the uncommitted changes (new files included) with a short message that says what they do. Then reply with the commit hash.',
+    '',
+  ].join('\n');
 }
 
 // --- where a change sits -----------------------------------------------------

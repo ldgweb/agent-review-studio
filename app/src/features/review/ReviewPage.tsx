@@ -31,11 +31,13 @@ import {
 } from '../../lib/review';
 import { useProjectReview } from '../../state/useProjectReview';
 import { usePref } from '../../state/usePref';
+import { DefinitionPeek, useDefinitionPeek } from './DefinitionPeek';
 import { FileHeader, type DiffScope, type NextStep } from './FileHeader';
 import { FileList } from './FileList';
 import { FileMenu, type FileActions } from './FileMenu';
 import { FileViewer } from './FileViewer';
 import { FindingHint } from './FindingHint';
+import { FinishDrawer } from './FinishDrawer';
 import { HunkHeader } from './HunkHeader';
 import { LastRound } from './LastRound';
 import { NoticeLine, type Notice } from './NoticeLine';
@@ -101,6 +103,7 @@ function Workbench({ api, review, state }: { api: Api; review: ProjectReview; st
   const [sessionOpen, setSessionOpen] = useState(false);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [finishOpen, setFinishOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [fileMenu, setFileMenu] = useState<{ file: ReviewFile; x: number; y: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -183,36 +186,67 @@ function Workbench({ api, review, state }: { api: Api; review: ProjectReview; st
 
   const notify = (tone: Notice['tone'], text: string) => setNotice({ key: `n-${Date.now()}`, tone, text, onDismiss: () => setNotice(null) });
 
-  const copyReview = async () => {
+  /** Copy a text for the agent, then record it as a round: the next review
+   * shows only what changes from here. The text is copied first. */
+  const handBack = async (text: string, items: number, done: () => void) => {
     if (copying.current) return;
     copying.current = true;
     setBusy(true);
     try {
-      if (!(await copyText(reviewText))) {
+      if (!(await copyText(text))) {
         notify('warn', 'The review could not be copied. Save it as .md, then try again.');
         return;
       }
-      const res = await api.handback(reviewText, state.draft ? countItems(state.draft) : pkg.items);
+      const res = await api.handback(text, items);
       if (!res.ok) {
         notify('warn', `The review is on the clipboard, but the next round could not start: ${res.error}`);
         return;
       }
-      setReviewOpen(false);
-      notify('info', `Review copied. Paste it into ${agentLabel}. Next time you see only what changes from here.`);
+      done();
     } finally {
       copying.current = false;
       setBusy(false);
     }
   };
+  const copyReview = () =>
+    handBack(reviewText, state.draft ? countItems(state.draft) : pkg.items, () => {
+      setReviewOpen(false);
+      notify('info', `Review copied. Paste it into ${agentLabel}. Next time you see only what changes from here.`);
+    });
+  const askAgentToCommit = (text: string) =>
+    handBack(text, 0, () => {
+      setFinishOpen(false);
+      notify('info', `Copied. Paste it into ${agentLabel}: it commits, and this page clears once the commit lands.`);
+    });
 
-  // One next step at a time: another file waiting, else copying the review
+  // One next step at a time: another file waiting, else copying the review,
+  // else (everything approved, nothing to ask) finishing it with a commit
   const nextStep: NextStep = (() => {
     const other = nextUndecidedFrom(selected.id);
     if (other && other.id !== selected.id) return { kind: 'next', onNext: goNext };
     if (counts.pending > 0) return { kind: 'none' };
     if (pkg.items > 0) return { kind: 'copy', label: `Copy review for ${agentLabel}`, busy, onCopy: () => void copyReview() };
-    return { kind: 'done' };
+    return {
+      kind: 'done',
+      open: finishOpen,
+      onFinish: () => {
+        setReviewOpen(false);
+        setFinishOpen((v) => !v);
+      },
+    };
   })();
+
+  // The decision that approves the last change opens the way out by itself.
+  // A review that opens already finished only shows the button.
+  const lastStep = useRef(nextStep.kind);
+  useEffect(() => {
+    if (nextStep.kind === 'done' && lastStep.current !== 'done') {
+      setReviewOpen(false);
+      setFinishOpen(true);
+    }
+    if (nextStep.kind !== 'done') setFinishOpen(false);
+    lastStep.current = nextStep.kind;
+  }, [nextStep.kind]);
 
   const decideFile = (file: ReviewFile, verdict: Verdict) => {
     const before = fileVerdict(state, file);
@@ -303,8 +337,9 @@ function Workbench({ api, review, state }: { api: Api; review: ProjectReview; st
     return (
       <HunkHeader
         hunk={h}
+        path={selected.path}
         verdict={hunkVerdict(state, h.id)}
-        hasSessions={review.sessions.length > 0}
+        sessions={review.sessions}
         collapsed={folds.collapsed.has(hi)}
         onToggleCollapsed={() => folds.toggle(hi)}
         groupSize={h.group ? groupSize.get(h.group) : undefined}
@@ -375,6 +410,20 @@ function Workbench({ api, review, state }: { api: Api; review: ProjectReview; st
       notify('warn', `Could not open ${EDITORS[editor].label}: ${errorMessage(e)}`),
     );
   const openInEditor = (line = lastLine) => openFileInEditor(selected.path, line);
+
+  // A function's definition, when the mouse rests on its name
+  const def = useDefinitionPeek(api.definitions, selected.path, selected.fingerprint);
+  const openDefinition = (path: string, line: number) => {
+    def.close();
+    const target = files.find((f) => f.path === path && f.changeType !== 'deleted');
+    // In the diff when the line is one of its changes; this file's other
+    // lines in the whole-file view; anything else in the editor
+    if (target?.hunks.some((h) => h.lines.some((l) => l.newLine === line))) jumpToFile(target.id, line);
+    else if (target?.id === selected.id && !selected.binary) {
+      setLastLine(line);
+      setViewerOpen(true);
+    } else void openFileInEditor(path, line);
+  };
 
   const fileActions: FileActions = {
     editorLabel: EDITORS[editor].label,
@@ -470,7 +519,7 @@ function Workbench({ api, review, state }: { api: Api; review: ProjectReview; st
           onShortcuts={() => setOverlayOpen(true)}
         />
 
-        <div className="diff-scroll">
+        <div className="diff-scroll" {...def.hoverProps}>
           <LastRound
             items={earlier.items}
             note={earlier.note}
@@ -560,6 +609,16 @@ function Workbench({ api, review, state }: { api: Api; review: ProjectReview; st
             onClose={() => setReviewOpen(false)}
           />
         )}
+        {finishOpen && nextStep.kind === 'done' && (
+          <FinishDrawer
+            agentLabel={agentLabel}
+            projectName={review.project.name}
+            root={review.project.root}
+            busy={busy}
+            onAskAgent={(text) => void askAgentToCommit(text)}
+            onClose={() => setFinishOpen(false)}
+          />
+        )}
       </section>
 
       {viewerOpen && (
@@ -576,6 +635,20 @@ function Workbench({ api, review, state }: { api: Api; review: ProjectReview; st
         />
       )}
       {sessionOpen && review.sessions.length > 0 && <SessionPanel review={review} onClose={() => setSessionOpen(false)} />}
+      {def.peek && (
+        <DefinitionPeek
+          peek={def.peek}
+          onOpen={openDefinition}
+          editorLabel={EDITORS[editor].label}
+          onEditor={(path, line) => {
+            def.close();
+            void openFileInEditor(path, line);
+          }}
+          onKeep={def.keep}
+          onLeave={def.leave}
+          onClose={def.close}
+        />
+      )}
       {overlayOpen && <ShortcutOverlay onClose={() => setOverlayOpen(false)} />}
       {fileMenu && <FileMenu {...fileMenu} actions={fileActions} onClose={() => setFileMenu(null)} />}
     </div>

@@ -1,8 +1,7 @@
 {
-  "sessionHash": "53ca1dc0ba837f6b3ecd6534d0bec509399e31a875008d56580185fe4ac5ab77",
+  "sessionHash": "18fa721b95248693e2dbfa7b7ba2702cdf008769f5d557a1d7703d6bc7db0c35",
   "session": {
     "sessionId": "11111111-2222-3333-4444-555555555555",
-    "source": "live",
     "timestamp": "2026-03-05T10:00:01.000Z",
     "agent": "claude-code",
     "agentLabel": "Claude Code",
@@ -17,7 +16,6 @@
       "Add validation",
       "Write tests"
     ],
-    "status": "needs-review",
     "outcome": "Done — signup now validates the email format, trims input, and the new test suite passes (5 tests).",
     "stats": {
       "filesAnalyzed": 1,
@@ -29,137 +27,25 @@
       "testsFailed": 1,
       "durationMinutes": 7
     },
-    "summary": {
-      "text": "Ingested from a live Claude Code transcript. The agent changed 2 files (+10 −1) across src, tests, ran 2 commands and 2 test runs.",
-      "impactedAreas": [
-        "src",
-        "tests"
-      ],
-      "riskWarnings": [
-        "Security-sensitive files were modified — review auth/credential handling.",
-        "1 tool call failed during the session."
-      ]
-    },
-    "systemAreas": [
-      {
-        "id": "area-src",
-        "label": "src",
-        "critical": true,
-        "dependsOn": []
-      },
-      {
-        "id": "area-tests",
-        "label": "tests",
-        "critical": true,
-        "dependsOn": []
-      }
-    ],
     "files": [
       {
         "id": "lf-1",
         "path": "src/auth/signup.ts",
         "changeType": "modified",
-        "language": "ts",
         "linesAdded": 4,
         "linesRemoved": 1,
-        "areaId": "area-src",
         "riskFlags": [
           "security"
-        ],
-        "summary": "Modified — +4 −1 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ -10,3 +10,6 @@",
-            "lines": [
-              {
-                "kind": "context",
-                "text": "function signup(email) {",
-                "oldLine": 10,
-                "newLine": 10
-              },
-              {
-                "kind": "add",
-                "text": "  if (!email.includes('@')) {",
-                "newLine": 11
-              },
-              {
-                "kind": "add",
-                "text": "    throw new ValidationError('invalid email');",
-                "newLine": 12
-              },
-              {
-                "kind": "add",
-                "text": "  }",
-                "newLine": 13
-              },
-              {
-                "kind": "del",
-                "text": "  return register(email);",
-                "oldLine": 11
-              },
-              {
-                "kind": "add",
-                "text": "  return register(email.trim());",
-                "newLine": 14
-              },
-              {
-                "kind": "context",
-                "text": "}",
-                "oldLine": 12,
-                "newLine": 15
-              }
-            ]
-          }
         ]
       },
       {
         "id": "lf-2",
         "path": "tests/signup.test.ts",
         "changeType": "created",
-        "language": "ts",
         "linesAdded": 6,
         "linesRemoved": 0,
-        "areaId": "area-tests",
         "riskFlags": [
           "security"
-        ],
-        "summary": "Created — +6 −0 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ new file — 6 lines @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "import { signup } from '../src/auth/signup';",
-                "newLine": 1
-              },
-              {
-                "kind": "add",
-                "text": "",
-                "newLine": 2
-              },
-              {
-                "kind": "add",
-                "text": "test('rejects invalid email', () => {",
-                "newLine": 3
-              },
-              {
-                "kind": "add",
-                "text": "  expect(() => signup('nope')).toThrow();",
-                "newLine": 4
-              },
-              {
-                "kind": "add",
-                "text": "});",
-                "newLine": 5
-              },
-              {
-                "kind": "add",
-                "text": "",
-                "newLine": 6
-              }
-            ]
-          }
         ]
       }
     ],
@@ -261,7 +147,6 @@
         "contributingFileIds": []
       }
     ],
-    "findings": [],
     "turns": [
       {
         "index": 0,

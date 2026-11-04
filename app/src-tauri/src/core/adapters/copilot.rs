@@ -2,7 +2,7 @@
 // (ask/edit/agent mode) from workspaceStorage/<hash>/chatSessions/.
 // File edits arrive as `textEditGroup` response parts (uri + inserted text
 // with real line numbers); tool calls as `toolInvocationSerialized` parts.
-// The transcript stores no "before" content, so its hunks are insert-only.
+// The transcript stores no "before" content, so only insertions are counted.
 // The project review takes the real diff from Git; these sessions add
 // file-level context. Defensive by design: undocumented internal format,
 // guarded field access, malformed files skipped.
@@ -14,8 +14,7 @@ use std::collections::HashSet;
 use std::sync::{Mutex, MutexGuard};
 
 use super::super::domain::{
-    AgentSession, DiffHunk, DiffLine, DiffLineKind, RawFile, RawSession, TimelineEvent,
-    TimelineEventDraft, TimelineEventKind,
+    AgentSession, RawFile, RawSession, TimelineEvent, TimelineEventDraft, TimelineEventKind,
 };
 use super::super::normalize::{first_line, normalize, truncate, TEST_COMMAND};
 use super::project_root::{ascend_to_project_root, common_root, git_branch_of, relative_to};
@@ -267,8 +266,6 @@ pub fn parse_copilot_session(
                     .get("edits")
                     .and_then(Value::as_array)
                     .unwrap_or(&empty_edits);
-                let mut hunk_lines: Vec<DiffLine> = Vec::new();
-                let mut header_line: i64 = 0;
                 for group in edits {
                     let empty_group: Vec<Value> = Vec::new();
                     for edit in group.as_array().unwrap_or(&empty_group) {
@@ -286,30 +283,13 @@ pub fn parse_copilot_session(
                         if text.is_empty() {
                             continue;
                         }
-                        if header_line == 0 {
-                            header_line = start_line;
-                        }
                         let cleaned = text.replace('\r', "");
                         let ins_lines: Vec<&str> = cleaned.split('\n').collect();
                         files[idx].added += ins_lines.len() as i64;
-                        for (i, t) in ins_lines.iter().enumerate() {
+                        for t in &ins_lines {
                             files[idx].added_lines.push((*t).to_string());
-                            hunk_lines.push(DiffLine {
-                                kind: DiffLineKind::Add,
-                                text: (*t).to_string(),
-                                old_line: None,
-                                new_line: Some(start_line + i as i64),
-                            });
                         }
                     }
-                }
-                if !hunk_lines.is_empty() {
-                    hunk_lines.truncate(120);
-                    let header = format!("@@ {}:{} @@", files[idx].path, header_line);
-                    files[idx].hunks.push(DiffHunk {
-                        header,
-                        lines: hunk_lines,
-                    });
                 }
                 // Streaming produces many parts per file: one timeline event per stretch
                 if files[idx].path != last_edited_path {
@@ -515,7 +495,6 @@ pub fn parse_copilot_session(
         commands_run,
         tests_run,
         tests_failed: 0,
-        errors: 0,
         // Without a creationDate the span is unknown (not "since 1970").
         duration_minutes: if created_ms != 0.0 {
             (((last_ms - created_ms) / 60000.0).round() as i64).max(1)

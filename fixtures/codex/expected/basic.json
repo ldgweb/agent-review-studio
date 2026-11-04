@@ -1,8 +1,7 @@
 {
-  "sessionHash": "fa0ef84a8a3d1d18aaa819d2649042b4616ad71b8aa2c2c36b15f79ecc7790e8",
+  "sessionHash": "71357bc74fc3c75e607e19a2d87b347b7c04919eca002b1967da0bcaef2f742c",
   "session": {
     "sessionId": "codex-aaaa-bbbb",
-    "source": "live",
     "timestamp": "2026-03-06T09:00:00.000Z",
     "agent": "codex",
     "agentLabel": "OpenAI Codex",
@@ -12,7 +11,6 @@
     "originalPrompt": "Fix the cart total rounding bug",
     "declaredGoal": "Fix the cart total rounding bug",
     "initialPlan": [],
-    "status": "needs-review",
     "outcome": "Fixed the rounding by switching toFixed to a numeric round; one legacy test still fails and needs a decision on expected cents behavior.",
     "stats": {
       "filesAnalyzed": 0,
@@ -24,83 +22,22 @@
       "testsFailed": 1,
       "durationMinutes": 2
     },
-    "summary": {
-      "text": "Ingested from a live OpenAI Codex transcript. The agent changed 2 files (+4 −1) across src, ran 2 commands and 1 test run.",
-      "impactedAreas": [
-        "src"
-      ],
-      "riskWarnings": [
-        "1 tool call failed during the session."
-      ]
-    },
-    "systemAreas": [
-      {
-        "id": "area-src",
-        "label": "src",
-        "critical": false,
-        "dependsOn": []
-      }
-    ],
     "files": [
       {
         "id": "lf-1",
         "path": "src/cart/total.js",
         "changeType": "modified",
-        "language": "js",
         "linesAdded": 1,
         "linesRemoved": 1,
-        "areaId": "area-src",
-        "riskFlags": [],
-        "summary": "Modified — +1 −1 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ src/cart/total.js @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "const round = (n) => Math.round(n * 100) / 100;"
-              },
-              {
-                "kind": "del",
-                "text": "const round = (n) => n.toFixed(2);"
-              },
-              {
-                "kind": "context",
-                "text": "context line"
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       },
       {
         "id": "lf-2",
         "path": "src/cart/round.test.js",
         "changeType": "created",
-        "language": "js",
         "linesAdded": 3,
         "linesRemoved": 0,
-        "areaId": "area-src",
-        "riskFlags": [],
-        "summary": "Created — +3 −0 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ src/cart/round.test.js @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "test('rounds to cents', () => {"
-              },
-              {
-                "kind": "add",
-                "text": "  expect(round(1.005)).toBe(1.01);"
-              },
-              {
-                "kind": "add",
-                "text": "});"
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       }
     ],
     "timeline": [
@@ -169,7 +106,6 @@
         "contributingFileIds": []
       }
     ],
-    "findings": [],
     "projectPath": "/fixtures/acme-shop",
     "turns": [
       {

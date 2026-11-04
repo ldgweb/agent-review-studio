@@ -30,13 +30,13 @@ pub static TEST_COMMAND: Lazy<Regex> = Lazy::new(|| {
 
 /// Result of `content_diff`.
 pub struct ContentDiff {
-    pub hunks: Vec<DiffHunk>,
     pub added: i64,
     pub removed: i64,
     pub added_lines: Vec<String>,
 }
 
-/// Line-level diff of two full file contents (before → after): common prefix/suffix trimmed, the changed middle becomes one del/add hunk with real line numbers.
+/// What changed between two full file contents (before → after): the
+/// common prefix and suffix trimmed, the middle counts as removed and added.
 pub fn content_diff(before: &str, after: &str) -> ContentDiff {
     let before_clean = before.replace('\r', "");
     let after_clean = after.replace('\r', "");
@@ -64,43 +64,7 @@ pub fn content_diff(before: &str, after: &str) -> ContentDiff {
     }
     let dels = &before_lines[prefix..before_lines.len() - suffix];
     let adds = &after_lines[prefix..after_lines.len() - suffix];
-    if dels.is_empty() && adds.is_empty() {
-        return ContentDiff {
-            hunks: Vec::new(),
-            added: 0,
-            removed: 0,
-            added_lines: Vec::new(),
-        };
-    }
-    let mut lines: Vec<DiffLine> = Vec::new();
-    for (i, text) in dels.iter().enumerate() {
-        lines.push(DiffLine {
-            kind: DiffLineKind::Del,
-            text: (*text).to_string(),
-            old_line: Some((prefix + 1 + i) as i64),
-            new_line: None,
-        });
-    }
-    for (i, text) in adds.iter().enumerate() {
-        lines.push(DiffLine {
-            kind: DiffLineKind::Add,
-            text: (*text).to_string(),
-            old_line: None,
-            new_line: Some((prefix + 1 + i) as i64),
-        });
-    }
-    lines.truncate(400);
     ContentDiff {
-        hunks: vec![DiffHunk {
-            header: format!(
-                "@@ -{},{} +{},{} @@",
-                prefix + 1,
-                dels.len(),
-                prefix + 1,
-                adds.len()
-            ),
-            lines,
-        }],
         added: adds.len() as i64,
         removed: dels.len() as i64,
         added_lines: adds.iter().map(|s| (*s).to_string()).collect(),
@@ -117,7 +81,7 @@ static PERFORMANCE_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)cache|queue|worker|cron|index\.(sql|php)").unwrap());
 static OUTSIDE_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"^([A-Za-z]:|/|~)").unwrap());
 
-// Local heuristic checks. The fixtures pin this behavior: treat it as frozen.
+// The built-in line checks of the project review.
 static SECRET_LINE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r#"(?i)(AKIA[0-9A-Z]{16}|(api[_-]?key|secret|token|password|passwd|authorization|bearer)\s*[:=]\s*["']?[A-Za-z0-9_\-.]{8,})"#,
@@ -137,8 +101,7 @@ static TEST_PATH: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-/// The built-in per-line checks, shared by the session normalizer and the
-/// project review.
+/// The built-in per-line checks of the project review.
 pub(crate) enum LineCheck {
     Secret,
     Leftover,
@@ -218,71 +181,33 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
         return None; // nothing to review
     }
 
-    // Insertion-ordered area registry
-    let mut area_order: Vec<String> = Vec::new();
-    let mut areas: Vec<SystemArea> = Vec::new();
-    let area_of = |rel: &str, areas: &mut Vec<SystemArea>, order: &mut Vec<String>| -> String {
-        let outside = OUTSIDE_PATTERN.is_match(rel);
-        let top = if outside {
-            "(outside project)".to_string()
-        } else if rel.contains('/') {
-            rel.split('/').next().unwrap_or("").to_string()
-        } else {
-            "(root)".to_string()
-        };
-        let id = area_id_of(&top);
-        if !order.contains(&id) {
-            order.push(id.clone());
-            areas.push(SystemArea {
-                id: id.clone(),
-                label: top,
-                critical: false,
-                depends_on: Vec::new(), // folder groups carry no inferred dependency edges
-            });
-        }
-        id
-    };
-
-    let mut files: Vec<FileChange> = Vec::new();
-    for (i, f) in raw.files.iter().enumerate() {
-        let area_id = area_of(&f.path, &mut areas, &mut area_order);
-        let outside = areas
-            .iter()
-            .find(|a| a.id == area_id)
-            .map(|a| a.label == "(outside project)")
-            .unwrap_or(false);
-        let mut flags = risk_flags_for(&f.path, &f.added_lines, f.added);
-        if outside {
-            flags.retain(|d| *d == RiskDimension::Maintainability);
-        }
-        if flags.contains(&RiskDimension::Security) || flags.contains(&RiskDimension::Database) {
-            if let Some(area) = areas.iter_mut().find(|a| a.id == area_id) {
-                area.critical = true;
+    let files: Vec<FileChange> = raw
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let mut flags = risk_flags_for(&f.path, &f.added_lines, f.added);
+            // A file outside the project only counts for its size
+            if OUTSIDE_PATTERN.is_match(&f.path) {
+                flags.retain(|d| *d == RiskDimension::Maintainability);
             }
-        }
-        let (change_type, verb) = if f.deleted {
-            (ChangeType::Deleted, "Deleted")
-        } else if f.created {
-            (ChangeType::Created, "Created")
-        } else {
-            (ChangeType::Modified, "Modified")
-        };
-        files.push(FileChange {
-            id: format!("lf-{}", i + 1),
-            path: f.path.clone(),
-            change_type,
-            language: language_of(&f.path),
-            lines_added: f.added,
-            lines_removed: f.removed,
-            area_id,
-            risk_flags: flags,
-            summary: format!(
-                "{} — +{} −{} lines in this session.",
-                verb, f.added, f.removed
-            ),
-            hunks: f.hunks.clone(),
-        });
-    }
+            let change_type = if f.deleted {
+                ChangeType::Deleted
+            } else if f.created {
+                ChangeType::Created
+            } else {
+                ChangeType::Modified
+            };
+            FileChange {
+                id: format!("lf-{}", i + 1),
+                path: f.path.clone(),
+                change_type,
+                lines_added: f.added,
+                lines_removed: f.removed,
+                risk_flags: flags,
+            }
+        })
+        .collect();
 
     let total_added: i64 = files.iter().map(|f| f.lines_added).sum();
     let total_removed: i64 = files.iter().map(|f| f.lines_removed).sum();
@@ -361,105 +286,6 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
         },
     ];
 
-    let mut risk_warnings: Vec<String> = Vec::new();
-    if !files_with(RiskDimension::Security).is_empty() {
-        risk_warnings.push(
-            "Security-sensitive files were modified — review auth/credential handling.".to_string(),
-        );
-    }
-    if !files_with(RiskDimension::Database).is_empty() {
-        risk_warnings.push("Database schema or model files were modified.".to_string());
-    }
-    if raw.tests_run == 0 && total_added > 50 {
-        risk_warnings.push("No test runs detected in this session.".to_string());
-    }
-    if raw.errors > 0 {
-        risk_warnings.push(format!(
-            "{} tool call{} failed during the session.",
-            raw.errors,
-            if raw.errors > 1 { "s" } else { "" }
-        ));
-    }
-
-    // Local heuristic checks.
-    let mut findings: Vec<Value> = Vec::new();
-    for file in &files {
-        let mut per_file = 0;
-        'lines: for h in &file.hunks {
-            for l in &h.lines {
-                if !matches!(l.kind, DiffLineKind::Add) {
-                    continue;
-                }
-                if per_file >= 25 {
-                    break 'lines;
-                }
-                // Adapters without real line numbers (Codex patches, Gemini
-                // and Cursor v1 edits) still get the finding, just unanchored.
-                let mut finding = if SECRET_LINE.is_match(&l.text) {
-                    serde_json::json!({
-                        "id": format!("lc-{}", findings.len() + 1),
-                        "source": "local",
-                        "kind": "issue",
-                        "severity": "high",
-                        "dimension": "security",
-                        "title": "Possible hardcoded secret",
-                        "body": "A secret-like value appears in an added line. Move it to configuration or a secret store.",
-                        "filePath": file.path,
-                    })
-                } else if LEFTOVER_LINE.is_match(&l.text) {
-                    serde_json::json!({
-                        "id": format!("lc-{}", findings.len() + 1),
-                        "source": "local",
-                        "kind": "suggestion",
-                        "severity": "low",
-                        "title": "Debug/diagnostic or TODO left in the change",
-                        "body": "This added line looks like a leftover debug statement or an unresolved TODO/FIXME.",
-                        "filePath": file.path,
-                    })
-                } else {
-                    continue;
-                };
-                if let (Some(line), Some(map)) = (l.new_line, finding.as_object_mut()) {
-                    map.insert("line".into(), serde_json::json!(line));
-                }
-                findings.push(finding);
-                per_file += 1;
-            }
-        }
-        if file.lines_added > 400 {
-            findings.push(serde_json::json!({
-                "id": format!("lc-{}", findings.len() + 1),
-                "source": "local",
-                "kind": "suggestion",
-                "severity": "low",
-                "dimension": "maintainability",
-                "title": format!("Large single-file change (+{} lines)", file.lines_added),
-                "body": "This file gained a lot of lines in one session. Consider splitting it, so it is easier to review.",
-                "filePath": file.path,
-                "line": 1,
-            }));
-        }
-        if TEST_PATH.is_match(&file.path)
-            && file.lines_removed > file.lines_added
-            && file.lines_removed > 0
-        {
-            findings.push(serde_json::json!({
-                "id": format!("lc-{}", findings.len() + 1),
-                "source": "local",
-                "kind": "question-for-agent",
-                "severity": "medium",
-                "title": "Test file shrank",
-                "body": format!(
-                    "This test file lost more lines than it gained (−{} +{}). Check that no test coverage was dropped.",
-                    file.lines_removed, file.lines_added
-                ),
-                "filePath": file.path,
-                "line": 1,
-            }));
-        }
-    }
-
-    let area_labels: Vec<&str> = areas.iter().map(|a| a.label.as_str()).collect();
     let declared_goal = match &raw.declared_goal {
         Some(g) if !g.is_empty() => g.clone(),
         _ => truncate(&first_line(&raw.original_prompt), 110),
@@ -472,10 +298,9 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
 
     Some(AgentSession {
         session_id: raw.session_id,
-        source: Some("live".to_string()),
         timestamp: raw.timestamp,
         agent: raw.agent,
-        agent_label: raw.agent_label.clone(),
+        agent_label: raw.agent_label,
         model: raw.model,
         project_name: raw.project_name,
         project_path: raw.project_path,
@@ -483,7 +308,6 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
         original_prompt: raw.original_prompt,
         declared_goal,
         initial_plan: raw.initial_plan,
-        status: "needs-review".to_string(),
         outcome,
         stats: SessionStats {
             files_analyzed: raw.files_analyzed,
@@ -495,28 +319,9 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
             tests_failed: raw.tests_failed,
             duration_minutes: raw.duration_minutes,
         },
-        summary: SessionSummary {
-            text: format!(
-                "Ingested from a live {} transcript. The agent changed {} file{} (+{} −{}) across {}, ran {} command{} and {} test run{}.",
-                raw.agent_label,
-                files.len(),
-                if files.len() > 1 { "s" } else { "" },
-                total_added,
-                total_removed,
-                area_labels.join(", "),
-                raw.commands_run,
-                if raw.commands_run == 1 { "" } else { "s" },
-                raw.tests_run,
-                if raw.tests_run == 1 { "" } else { "s" },
-            ),
-            impacted_areas: area_labels.iter().map(|s| s.to_string()).collect(),
-            risk_warnings,
-        },
-        system_areas: areas,
         files,
         timeline: raw.timeline,
         risks,
-        findings,
         turns: Vec::new(),
         edits: Vec::new(),
         archived: None,
@@ -527,7 +332,7 @@ pub fn normalize(raw: RawSession) -> Option<AgentSession> {
 /// evidence with unchanged counts must still invalidate indexed content.
 pub fn session_hash(session: &AgentSession) -> String {
     use sha2::{Digest, Sha256};
-    // Include every field, notably hunk text, command outcomes and findings.
+    // Include every field, notably recorded edits, command outcomes and risk.
     fn canonical(value: &mut Value) {
         match value {
             Value::Object(map) => {

@@ -1,8 +1,7 @@
 {
-  "sessionHash": "02311624229a7eb998d276058810e160e51fdd4e53159e30b823c45217eac6f8",
+  "sessionHash": "7bcc153fdede58ff79250805efec6e63260e581664f09c1c8cef4e4d49563abc",
   "session": {
     "sessionId": "aider-acme-shop-5963150e-1-2026-03-08",
-    "source": "live",
     "timestamp": "2026-03-08T16:30:00.000Z",
     "agent": "aider",
     "agentLabel": "Aider",
@@ -13,7 +12,6 @@
     "originalPrompt": "Add a discount field to the order summary",
     "declaredGoal": "Add a discount field to the order summary",
     "initialPlan": [],
-    "status": "needs-review",
     "outcome": "The discount field is now rendered in the order summary with a default of zero.",
     "stats": {
       "filesAnalyzed": 0,
@@ -25,33 +23,14 @@
       "testsFailed": 0,
       "durationMinutes": 1
     },
-    "summary": {
-      "text": "Ingested from a live Aider transcript. The agent changed 1 file (+0 −0) across src, ran 0 commands and 0 test runs.",
-      "impactedAreas": [
-        "src"
-      ],
-      "riskWarnings": []
-    },
-    "systemAreas": [
-      {
-        "id": "area-src",
-        "label": "src",
-        "critical": false,
-        "dependsOn": []
-      }
-    ],
     "files": [
       {
         "id": "lf-1",
         "path": "src/checkout/summary.py",
         "changeType": "modified",
-        "language": "py",
         "linesAdded": 0,
         "linesRemoved": 0,
-        "areaId": "area-src",
-        "riskFlags": [],
-        "summary": "Modified — +0 −0 lines in this session.",
-        "hunks": []
+        "riskFlags": []
       }
     ],
     "timeline": [
@@ -104,7 +83,6 @@
         "rationale": "1 files changed, +0 lines added in one session.",
         "contributingFileIds": []
       }
-    ],
-    "findings": []
+    ]
   }
 }

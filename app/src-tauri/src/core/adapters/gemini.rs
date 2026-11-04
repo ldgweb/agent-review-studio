@@ -12,8 +12,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use super::super::domain::{
-    AgentSession, DiffHunk, DiffLine, DiffLineKind, RawFile, RawSession, TimelineEvent,
-    TimelineEventDraft, TimelineEventKind,
+    AgentSession, RawFile, RawSession, TimelineEvent, TimelineEventDraft, TimelineEventKind,
 };
 use super::super::normalize::{duration_minutes, first_line, normalize, truncate, TEST_COMMAND};
 use super::project_root::{ascend_to_project_root, common_root, git_branch_of, relative_to};
@@ -59,7 +58,6 @@ struct ParseState {
     commands_run: i64,
     tests_run: i64,
     tests_failed: i64,
-    errors: i64,
     files_analyzed: i64,
     /// Whether the last function call ran a test command, to attribute failures to test runs.
     last_command_was_test: bool,
@@ -76,7 +74,6 @@ impl ParseState {
             commands_run: 0,
             tests_run: 0,
             tests_failed: 0,
-            errors: 0,
             files_analyzed: 0,
             last_command_was_test: false,
         }
@@ -113,36 +110,14 @@ impl ParseState {
 }
 
 fn add_lines(file: &mut RawFile, added: &str, removed: &str) {
-    let mut lines: Vec<DiffLine> = Vec::new();
     if !removed.is_empty() {
-        for line in removed.split('\n') {
-            file.removed += 1;
-            lines.push(DiffLine {
-                kind: DiffLineKind::Del,
-                text: line.to_string(),
-                old_line: None,
-                new_line: None,
-            });
-        }
+        file.removed += removed.split('\n').count() as i64;
     }
     if !added.is_empty() {
         for line in added.split('\n') {
             file.added += 1;
             file.added_lines.push(line.to_string());
-            lines.push(DiffLine {
-                kind: DiffLineKind::Add,
-                text: line.to_string(),
-                old_line: None,
-                new_line: None,
-            });
         }
-    }
-    if !lines.is_empty() {
-        lines.truncate(120);
-        file.hunks.push(DiffHunk {
-            header: format!("@@ {} @@", file.path),
-            lines,
-        });
     }
 }
 
@@ -256,7 +231,6 @@ fn record_error(state: &mut ParseState, error: Option<&Value>, ts: &str) {
     if err_text.is_empty() {
         return;
     }
-    state.errors += 1;
     if state.last_command_was_test {
         state.tests_failed += 1;
     }
@@ -409,29 +383,13 @@ pub fn parse_gemini_file(raw: &str, fallback_id: &str, mtime_iso_ts: &str) -> Op
     } else {
         ascend_to_project_root(&common_root(&paths))
     };
-    // paths (and hunk headers built from them) become project-relative once a common root is known
+    // Paths become project-relative once a common root is known
     let files: Vec<RawFile> = state
         .files
         .iter()
-        .map(|f| {
-            let path = relative_to(&root_dir, &f.path);
-            let hunks = f
-                .hunks
-                .iter()
-                .map(|h| DiffHunk {
-                    header: format!("@@ {} @@", path),
-                    lines: h.lines.clone(),
-                })
-                .collect();
-            RawFile {
-                path: path.clone(),
-                created: f.created,
-                deleted: f.deleted,
-                added: f.added,
-                removed: f.removed,
-                hunks,
-                added_lines: f.added_lines.clone(),
-            }
+        .map(|f| RawFile {
+            path: relative_to(&root_dir, &f.path),
+            ..f.clone()
         })
         .collect();
 
@@ -488,7 +446,6 @@ pub fn parse_gemini_file(raw: &str, fallback_id: &str, mtime_iso_ts: &str) -> Op
         commands_run: state.commands_run,
         tests_run: state.tests_run,
         tests_failed: state.tests_failed,
-        errors: state.errors,
         duration_minutes: duration,
     })
 }

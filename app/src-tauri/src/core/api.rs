@@ -201,10 +201,11 @@ fn test_rule(body: &Value) -> Value {
 
 /// Handle one API call; `path` has the /api prefix already stripped.
 ///
-/// Routes (exact method + path; `?query` only on GET /sessions):
-///   GET  /sessions[?refresh=1]  POST /sessions/archive
+/// Routes (exact method + path; `?query` only on GET /sessions, where
+/// `lite=1` leaves out the session list):
+///   GET  /sessions[?refresh=1][&lite=1]  POST /sessions/archive
 ///   GET  /projects              GET /review?project=<path>
-///   POST /review/{state,handback,file,reveal,clear}
+///   POST /review/{state,handback,file,reveal,clear,definition}
 ///   POST /open                  POST /demo/install
 ///   GET|POST /settings          POST /rules/test
 pub async fn handle(path: &str, method: &str, body: Option<&str>) -> Value {
@@ -221,6 +222,8 @@ pub async fn handle(path: &str, method: &str, body: Option<&str>) -> Value {
     match (method.as_str(), route) {
         ("GET", "/sessions") => {
             let refresh = query.split('&').any(|p| p == "refresh=1");
+            // The window needs the sources only; the session list is for `ars list`
+            let lite = query.split('&').any(|p| p == "lite=1");
             let state = if refresh {
                 tokio::task::spawn_blocking(scanner::rescan)
                     .await
@@ -232,11 +235,10 @@ pub async fn handle(path: &str, method: &str, body: Option<&str>) -> Value {
             } else {
                 scanner::snapshot()
             };
-            let mut response = json!({
-                "configPath": config_path_slashes(),
-                "sources": state.sources.clone(),
-                "sessions": serve_summaries(&state),
-            });
+            let mut response = json!({ "sources": state.sources.clone() });
+            if !lite {
+                response["sessions"] = json!(serve_summaries(&state));
+            }
             if let Some(e) = storage::last_error() {
                 response["storageError"] = json!(e);
             }
@@ -329,6 +331,23 @@ pub async fn handle(path: &str, method: &str, body: Option<&str>) -> Value {
                     Some(path) if !project.is_empty() => review::file_lines(project, path, base),
                     _ => err("Missing project or path."),
                 }
+            })
+            .await
+        }
+        ("POST", "/review/definition") => {
+            blocking(move || {
+                let field = |k: &str| {
+                    body_json
+                        .get(k)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let (project, name, from) = (field("project"), field("name"), field("from"));
+                if project.is_empty() {
+                    return err("Missing project.");
+                }
+                review::definition::definitions(&project, &name, &from)
             })
             .await
         }
