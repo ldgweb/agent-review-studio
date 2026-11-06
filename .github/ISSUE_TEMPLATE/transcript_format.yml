@@ -43,4 +43,4 @@ body:
     id: app-version
     attributes:
       label: Agent Review Studio version
-      placeholder: "0.11.0, or commit hash if built from source"
+      placeholder: "0.12.0, or commit hash if built from source"
