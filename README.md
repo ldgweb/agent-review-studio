@@ -101,10 +101,10 @@ The app only reads files the agents already write on your machine. These are the
 
 | Agent | Default location | The why |
 | --- | --- | --- |
-| Claude Code | `~/.claude/projects` | line by line |
+| Claude Code | `~/.claude/projects` | line by line, including files a shell command changed |
 | Codex | `~/.codex/sessions` | line by line |
 | Cursor | Cursor's `User/globalStorage` folder (`%APPDATA%\Cursor\…` on Windows, `~/Library/Application Support/Cursor/…` on macOS, `~/.config/Cursor/…` on Linux) | per file |
-| VS Code Copilot | VS Code's `User/workspaceStorage` folder | per file |
+| VS Code Copilot | VS Code's `User/workspaceStorage` folder | line by line (edits made through its patch and replace tools) |
 | Any agent or CI | `ars/v1` JSON files in `~/.agent-review-studio/sessions` (see the [example](fixtures/custom/basic.json) and the [parser](app/src-tauri/src/core/adapters/custom.rs)) | line by line |
 
 "Line by line" means each changed block is matched against the edits recorded in the transcript, and the counts say how much matched ("8 of 10 lines"), never a score. "Per file" means the transcript tells which files a request touched, not which lines.
@@ -235,7 +235,7 @@ cargo clippy --release --locked --all-targets --manifest-path src-tauri/Cargo.to
 cargo test --release --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-The Rust audit looks up every registry package in `Cargo.lock` on OSV. It fails only on a vulnerability in a package a release build ships (Windows, macOS or Linux), unless `app/scripts/audit-allowlist.json` says why it doesn't affect the app. Informational advisories (unmaintained, unsound) are listed but don't fail it. Both audits need internet access. Three Rust smoke tests are ignored by default because they read or change real user data; the normal tests only use synthetic fixtures and temporary repositories.
+The Rust audit looks up every registry package in `Cargo.lock` on OSV. It fails only on a vulnerability in a package a release build ships (Windows, macOS or Linux), unless `app/scripts/audit-allowlist.json` says why it doesn't affect the app. Informational advisories (unmaintained, unsound) are listed but don't fail it. Both audits need internet access. Four Rust smoke tests are ignored by default because they read or change real user data; the normal tests only use synthetic fixtures and temporary repositories. After an agent update, `cargo test --release --lib smoke_source_counts -- --ignored --nocapture` (from `app/src-tauri`) prints, for each source, how many sessions, requests, recorded edits, commands and tests it found on your machine, without their text.
 
 ## Contributing
 

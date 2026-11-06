@@ -453,6 +453,44 @@ fn do_scan() -> Arc<ScanState> {
 mod tests {
     use super::*;
 
+    /// Machine-dependent smoke test: run explicitly with
+    /// `cargo test --release --lib smoke_source_counts -- --ignored --nocapture`.
+    /// Parses the real sources on this machine and prints only counts per
+    /// source (sessions, turns, recorded edits, commands, tests), never their
+    /// text: a quick way to see whether an agent update broke its adapter.
+    #[test]
+    #[ignore]
+    fn smoke_source_counts() {
+        let config = load_config();
+        for adapter in ADAPTERS.iter() {
+            let mut cfg = adapter_config_of(&config, adapter.id());
+            // Sources switched off in Settings are read too, and marked.
+            let off = !cfg.enabled;
+            cfg.enabled = true;
+            let result = adapter.collect(&cfg, 30);
+            let s = &result.sessions;
+            let sum = |f: &dyn Fn(&AgentSession) -> usize| s.iter().map(f).sum::<usize>();
+            println!(
+                "{:<8}{} sessions {:>3} | with turns {:>3} | with edits {:>3} | edits {:>5} | commands {:>5} | tests {:>4} failed {:>3}{}",
+                adapter.id(),
+                if off { " (off)" } else { "" },
+                s.len(),
+                s.iter().filter(|x| !x.turns.is_empty()).count(),
+                s.iter().filter(|x| !x.edits.is_empty()).count(),
+                sum(&|x| x.edits.len()),
+                sum(&|x| x.stats.commands_run as usize),
+                sum(&|x| x.stats.tests_run as usize),
+                sum(&|x| x.stats.tests_failed as usize),
+                result
+                    .status
+                    .hint
+                    .as_deref()
+                    .map(|h| format!(" | hint: {h}"))
+                    .unwrap_or_default()
+            );
+        }
+    }
+
     #[test]
     fn disabled_sources_follow_settings() {
         let mut config = super::super::config::defaults();
