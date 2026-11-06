@@ -231,7 +231,6 @@ pub fn parse_aider_history(raw: &str, project_dir: &str, mtime_iso_ts: &str) -> 
             commands_run,
             tests_run,
             tests_failed: 0,
-            errors: 0,
             duration_minutes: 1,
         });
         if let Some(session) = session {

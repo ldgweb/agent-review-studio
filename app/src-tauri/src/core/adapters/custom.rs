@@ -188,6 +188,8 @@ pub fn parse_ars_session(
     let files_input = files_input?;
 
     let mut files: Vec<RawFile> = Vec::new();
+    // Each file's diff, kept for its recorded edit
+    let mut diffs: Vec<Vec<DiffHunk>> = Vec::new();
     for f in files_input {
         let raw_path = s(f.get("path"));
         if raw_path.is_empty() {
@@ -244,9 +246,9 @@ pub fn parse_ars_session(
             deleted: false,
             added,
             removed,
-            hunks,
             added_lines,
         });
+        diffs.push(hunks);
     }
 
     let mut timeline: Vec<TimelineEvent> = Vec::new();
@@ -356,7 +358,7 @@ pub fn parse_ars_session(
         timestamp: timestamp.clone(),
     }];
     let mut edits: Vec<RecordedEdit> = Vec::new();
-    for f in &files {
+    for (f, hunks) in files.iter().zip(&diffs) {
         let event = timeline.iter().rev().find(|e| {
             e.kind == TimelineEventKind::FileEdit && e.file_path.as_deref() == Some(&f.path)
         });
@@ -378,7 +380,7 @@ pub fn parse_ars_session(
                 .unwrap_or_else(|| timestamp.clone()),
             event_id: event.map(|e| e.id.clone()),
         };
-        for line in f.hunks.iter().flat_map(|h| &h.lines) {
+        for line in hunks.iter().flat_map(|h| &h.lines) {
             match line.kind {
                 DiffLineKind::Add => edit.push_added(&line.text),
                 DiffLineKind::Del => edit.push_removed(&line.text),
@@ -419,7 +421,6 @@ pub fn parse_ars_session(
         commands_run: stat("commandsRun", 0),
         tests_run: stat("testsRun", 0),
         tests_failed: stat("testsFailed", 0),
-        errors: 0,
         duration_minutes: stat("durationMinutes", 1),
     })?;
     session.turns = turns;

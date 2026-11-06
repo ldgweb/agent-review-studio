@@ -14,8 +14,6 @@ use std::sync::Mutex;
 
 const MIN_FILE_BYTES: u64 = 5_000;
 const DETAIL_MAX: usize = 600;
-const HUNKS_PER_FILE: usize = 4;
-const HUNK_LINES_MAX: usize = 60;
 
 /// Truthy: a non-empty string, a non-zero number, true, or any array/object.
 fn is_truthy(v: &Value) -> bool {
@@ -180,7 +178,6 @@ pub struct ClaudeParser {
     commands_run: i64,
     tests_run: i64,
     tests_failed: i64,
-    errors: i64,
     last_assistant_text: String,
     /// The agent's latest text in the current turn (edit rationale)
     rationale: String,
@@ -211,7 +208,6 @@ impl ClaudeParser {
             commands_run: 0,
             tests_run: 0,
             tests_failed: 0,
-            errors: 0,
             last_assistant_text: String::new(),
             rationale: String::new(),
             first_ts: String::new(),
@@ -539,7 +535,6 @@ impl ClaudeParser {
                 if !failed {
                     continue;
                 }
-                self.errors += 1;
                 let tool = self.calls.get(tool_use_id);
                 if let Some(call) = tool {
                     if (call.name == "Bash" || call.name == "PowerShell")
@@ -640,52 +635,6 @@ impl ClaudeParser {
             }
             file.added += added;
             file.removed += removed;
-            if file.hunks.len() < HUNKS_PER_FILE {
-                let old_start = patch.get("oldStart").and_then(Value::as_i64).unwrap_or(0);
-                let old_lines_n = patch.get("oldLines").and_then(Value::as_i64).unwrap_or(0);
-                let new_start = patch.get("newStart").and_then(Value::as_i64).unwrap_or(0);
-                let new_lines_n = patch.get("newLines").and_then(Value::as_i64).unwrap_or(0);
-                let mut old_ln = old_start;
-                let mut new_ln = new_start;
-                let mut hunk_lines: Vec<DiffLine> = Vec::new();
-                for l in lines.iter().take(HUNK_LINES_MAX) {
-                    let kind = if l.starts_with('+') {
-                        DiffLineKind::Add
-                    } else if l.starts_with('-') {
-                        DiffLineKind::Del
-                    } else {
-                        DiffLineKind::Context
-                    };
-                    let line = DiffLine {
-                        kind,
-                        text: drop_first_unit(l),
-                        old_line: if kind != DiffLineKind::Add {
-                            Some(old_ln)
-                        } else {
-                            None
-                        },
-                        new_line: if kind != DiffLineKind::Del {
-                            Some(new_ln)
-                        } else {
-                            None
-                        },
-                    };
-                    if kind != DiffLineKind::Add {
-                        old_ln += 1;
-                    }
-                    if kind != DiffLineKind::Del {
-                        new_ln += 1;
-                    }
-                    hunk_lines.push(line);
-                }
-                file.hunks.push(DiffHunk {
-                    header: format!(
-                        "@@ -{},{} +{},{} @@",
-                        old_start, old_lines_n, new_start, new_lines_n
-                    ),
-                    lines: hunk_lines,
-                });
-            }
         }
         if is_create && patches.is_empty() {
             if let Some(content_str) = tr.get("content").and_then(Value::as_str) {
@@ -698,25 +647,6 @@ impl ClaudeParser {
                 for l in &lines {
                     edit.push_added(l);
                 }
-                let shown: Vec<&str> = lines.iter().take(400).copied().collect();
-                let extra = if lines.len() > shown.len() {
-                    format!(" (first {} shown)", shown.len())
-                } else {
-                    String::new()
-                };
-                file.hunks = vec![DiffHunk {
-                    header: format!("@@ new file — {} lines{} @@", lines.len(), extra),
-                    lines: shown
-                        .iter()
-                        .enumerate()
-                        .map(|(i, text)| DiffLine {
-                            kind: DiffLineKind::Add,
-                            text: (*text).to_string(),
-                            old_line: None,
-                            new_line: Some(i as i64 + 1),
-                        })
-                        .collect(),
-                }];
             }
         }
         if edit.line_count() > 0 {
@@ -774,7 +704,6 @@ impl ClaudeParser {
             commands_run: self.commands_run,
             tests_run: self.tests_run,
             tests_failed: self.tests_failed,
-            errors: self.errors,
             duration_minutes: dur,
         })?;
         session.turns = self.turns.clone();

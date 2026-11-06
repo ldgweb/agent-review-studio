@@ -13,10 +13,13 @@ import { fileURLToPath } from 'node:url';
 const manifest = fileURLToPath(new URL('../src-tauri/Cargo.toml', import.meta.url));
 const lock = readFileSync(new URL('../src-tauri/Cargo.lock', import.meta.url), 'utf8');
 const allowlist = JSON.parse(readFileSync(new URL('./audit-allowlist.json', import.meta.url), 'utf8'));
-// The platforms with release builds, and the targets each one ships. Only
-// Windows is released today; add macOS or Linux here when they are.
+// The platforms with release builds, and the targets each one ships. The
+// macOS release is universal: it ships both the Apple silicon and the Intel
+// build.
 const targets = {
   windows: ['x86_64-pc-windows-msvc'],
+  macos: ['aarch64-apple-darwin', 'x86_64-apple-darwin'],
+  linux: ['x86_64-unknown-linux-gnu'],
 };
 
 function shipped(target) {

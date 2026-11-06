@@ -40,66 +40,23 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// A VS Code-family editor's per-user folder: `%APPDATA%` on Windows,
+/// `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` (usually
+/// `~/.config`) on Linux.
+fn editor_user_dir(app: &str, sub: &str) -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"))
+        .join(app)
+        .join("User")
+        .join(sub)
+}
+
 fn default_cursor_dir() -> PathBuf {
-    if cfg!(target_os = "windows") {
-        std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs::home_dir()
-                    .unwrap_or_default()
-                    .join("AppData")
-                    .join("Roaming")
-            })
-            .join("Cursor")
-            .join("User")
-            .join("globalStorage")
-    } else if cfg!(target_os = "macos") {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join("Library")
-            .join("Application Support")
-            .join("Cursor")
-            .join("User")
-            .join("globalStorage")
-    } else {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join(".config")
-            .join("Cursor")
-            .join("User")
-            .join("globalStorage")
-    }
+    editor_user_dir("Cursor", "globalStorage")
 }
 
 fn default_copilot_dir() -> PathBuf {
-    if cfg!(target_os = "windows") {
-        std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs::home_dir()
-                    .unwrap_or_default()
-                    .join("AppData")
-                    .join("Roaming")
-            })
-            .join("Code")
-            .join("User")
-            .join("workspaceStorage")
-    } else if cfg!(target_os = "macos") {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join("Library")
-            .join("Application Support")
-            .join("Code")
-            .join("User")
-            .join("workspaceStorage")
-    } else {
-        dirs::home_dir()
-            .unwrap_or_default()
-            .join(".config")
-            .join("Code")
-            .join("User")
-            .join("workspaceStorage")
-    }
+    editor_user_dir("Code", "workspaceStorage")
 }
 
 fn path_str(p: PathBuf) -> String {

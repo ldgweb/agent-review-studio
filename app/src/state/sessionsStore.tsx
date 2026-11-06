@@ -47,7 +47,7 @@ export function SessionsProvider({ children }: { children: ReactNode }) {
 
   const doFetch = useCallback((silent: boolean, forceRescan = false) => {
     if (!silent) setLoading(true);
-    apiFetch<{ sources?: SourceStatus[]; storageError?: string }>(forceRescan ? '/api/sessions?refresh=1' : '/api/sessions')
+    apiFetch<{ sources?: SourceStatus[]; storageError?: string }>(forceRescan ? '/api/sessions?refresh=1&lite=1' : '/api/sessions?lite=1')
       .then((data) => {
         if (!mounted.current) return;
         setSources(Array.isArray(data.sources) ? data.sources : []);

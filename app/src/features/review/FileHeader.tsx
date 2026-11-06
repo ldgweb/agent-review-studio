@@ -9,8 +9,8 @@ import { useDismiss } from '../../state/useDismiss';
 // The one toolbar of the review, above the code. On the left, the file and
 // how much changed. On the right, every action in the order you use them:
 // decide this file, then move on (to the next file, then to copying the
-// review for the agent). View preferences sit behind "⋯": set once, not
-// read every time.
+// review for the agent, or to finishing it when everything is approved).
+// View preferences sit behind "⋯": set once, not read every time.
 
 export type DiffScope = 'all' | 'since';
 
@@ -18,7 +18,7 @@ export type DiffScope = 'all' | 'since';
 export type NextStep =
   | { kind: 'next'; onNext: () => void }
   | { kind: 'copy'; label: string; busy: boolean; onCopy: () => void }
-  | { kind: 'done' }
+  | { kind: 'done'; open: boolean; onFinish: () => void }
   | { kind: 'none' };
 
 interface FileHeaderProps {
@@ -134,9 +134,14 @@ export function FileHeader({
         </button>
       )}
       {next.kind === 'done' && (
-        <span className="done-chip" title="Nothing to send back: commit with your Git tools">
-          <IconCheck size={13} /> All approved
-        </span>
+        <button
+          className={`btn btn-primary btn-tool-primary${next.open ? ' on' : ''}`}
+          aria-expanded={next.open}
+          title="Everything is approved: commit it, or let the agent commit it"
+          onClick={next.onFinish}
+        >
+          <IconCheck size={14} /> Finish review
+        </button>
       )}
       <ViewMenu {...view} />
     </div>

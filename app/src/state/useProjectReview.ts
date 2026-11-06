@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { apiFetch, errorMessage, isDesktop } from '../lib/api';
-import type { AgentPackage, ProjectReview, ReviewState } from '../types/review';
+import type { AgentPackage, DefinitionResult, ProjectReview, ReviewState } from '../types/review';
 
 // One project's review, live. The core sends an event when the project's
 // files or any transcript change; the review reloads then, and when the
@@ -177,6 +177,14 @@ export function useProjectReview(path: string) {
     [readFile],
   );
 
+  /** Where a name is defined in the project, found by name (read-only
+   * git grep), best first: the file being read before the others. */
+  const definitions = useCallback(
+    (name: string, from: string): Promise<DefinitionResult> =>
+      apiFetch<DefinitionResult>('/api/review/definition', { method: 'POST', body: { project: root.current, name, from } }),
+    [],
+  );
+
   /** Show one of the review's files in the system's file manager */
   const reveal = useCallback(async (filePath: string): Promise<ActionResult> => {
     try {
@@ -188,7 +196,7 @@ export function useProjectReview(path: string) {
   }, []);
 
   return useMemo(
-    () => ({ review, state, pkg, loading, error, saveError, saving, refresh: load, update, handback, readFile, fileLines, reveal }),
-    [review, state, pkg, loading, error, saveError, saving, load, update, handback, readFile, fileLines, reveal],
+    () => ({ review, state, pkg, loading, error, saveError, saving, refresh: load, update, handback, readFile, fileLines, reveal, definitions }),
+    [review, state, pkg, loading, error, saveError, saving, load, update, handback, readFile, fileLines, reveal, definitions],
   );
 }

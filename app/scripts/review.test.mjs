@@ -13,6 +13,7 @@ function load(relative) {
 }
 const R = load('../src/lib/review.ts');
 const I = load('../src/lib/intraline.ts');
+const H = load('../src/lib/history.ts');
 // Values built inside the vm context have their own prototypes; copy them
 // into this realm before structural comparison.
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -61,7 +62,7 @@ test('comments follow their line, and go outdated with their change', () => {
   const c = { id: 'c1', path: 'a.ts', hunkId: 'h1', li: 0, kind: 'add', lineText: 'console.log(x)', line: 2, text: 'drop it', at: AT };
   assert.equal(R.commentLineIndex(h, c), 1, 'found again by kind and text');
   const s = { ...emptyState(), comments: [c] };
-  assert.equal(R.currentComments(s, [file('a.ts', [h])]).length, 1);
+  assert.equal(R.outdatedComments(s, [file('a.ts', [h])]).length, 0, 'its change is still there');
   assert.equal(R.outdatedComments(s, [file('a.ts', [hunk('h2', [])])]).length, 1);
 });
 
@@ -137,4 +138,34 @@ test('sortFindings ranks by severity, then potential bugs, without mutating the 
   ];
   assert.deepEqual(plain(R.sortFindings(findings).map((f) => f.id)), ['critical', 'high-bug', 'high-issue', 'low']);
   assert.equal(findings[0].id, 'low');
+});
+
+test('commit commands keep the message literal in PowerShell and in a POSIX shell', () => {
+  assert.equal(R.shellQuote("don't $HOME `x`", 'posix'), "'don'\\''t $HOME `x`'");
+  assert.equal(R.shellQuote('it’s $env:PATH', 'powershell'), `'it’’s $env:PATH'`);
+  assert.equal(
+    R.commitCommands('C:/w/shop', '  Add   discount\ncodes ', 'powershell'),
+    "cd 'C:/w/shop'\ngit add -A\ngit commit -m 'Add discount codes'",
+  );
+  assert.match(R.approvalText('shop'), /Everything is approved: change nothing\./);
+});
+
+test('after a change: the commands and errors that name its file, up to the first test run', () => {
+  const ev = (id, kind, extra = {}) => ({ id, timestamp: `2026-10-28T10:0${id.slice(3)}:00Z`, kind, title: kind, ...extra });
+  const timeline = [
+    ev('ev-1', 'file-edit', { filePath: 'src/cart.ts' }),
+    ev('ev-2', 'command', { command: 'npx prettier src/cart.ts', exitCode: 0 }),
+    ev('ev-3', 'command', { command: 'ls' }),
+    ev('ev-4', 'error', { title: 'Type error in other.ts' }),
+    ev('ev-5', 'test-run', { command: 'npm test', exitCode: 1 }),
+    ev('ev-6', 'command', { command: 'cat src/cart.ts' }),
+  ];
+  const step = { sessionId: 's', timestamp: '2026-10-28T10:01:00Z', eventId: 'ev-1', lines: 2 };
+  assert.deepEqual(plain(H.afterEdit(timeline, step, 'src/cart.ts').map((e) => e.id)), ['ev-2', 'ev-5']);
+  // No event id: the steps recorded after the edit's time
+  const byTime = { ...step, eventId: undefined, timestamp: '2026-10-28T10:04:30Z' };
+  assert.deepEqual(plain(H.afterEdit(timeline, byTime, 'src/cart.ts').map((e) => e.id)), ['ev-5']);
+  assert.equal(H.outcomeOf(timeline[4]).text, 'failed (exit 1)');
+  assert.equal(H.outcomeOf({ ...timeline[4], exitCode: undefined }).text, 'no exit code');
+  assert.equal(H.outcomeOf(timeline[3]), null);
 });

@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   branch TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   declared_goal TEXT NOT NULL,
-  status TEXT NOT NULL,
   files_modified INTEGER NOT NULL,
   lines_added INTEGER NOT NULL,
   lines_removed INTEGER NOT NULL,
@@ -81,16 +80,24 @@ fn open() -> Result<Connection, String> {
         Connection::open(&path).map_err(|e| format!("Could not open {}: {e}", path.display()))?;
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("Could not prepare {}: {e}", path.display()))?;
-    // Migration: older databases lack the summary column.
-    let has_summary = conn
-        .prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = 'summary'")
-        .and_then(|mut stmt| stmt.exists([]))
-        .map_err(|e| format!("Could not inspect {}: {e}", path.display()))?;
-    if !has_summary {
-        conn.execute("ALTER TABLE sessions ADD COLUMN summary TEXT", [])
-            .map_err(|e| format!("Could not migrate {}: {e}", path.display()))?;
-    }
+    migrate(&conn).map_err(|e| format!("Could not migrate {}: {e}", path.display()))?;
     Ok(conn)
+}
+
+/// Bring an older sessions table up to date: older databases lack the
+/// summary column, and have a status column that held a value nothing read.
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let has = |column: &str| {
+        conn.prepare("SELECT 1 FROM pragma_table_info('sessions') WHERE name = ?1")
+            .and_then(|mut stmt| stmt.exists([column]))
+    };
+    if !has("summary")? {
+        conn.execute("ALTER TABLE sessions ADD COLUMN summary TEXT", [])?;
+    }
+    if has("status")? {
+        conn.execute("ALTER TABLE sessions DROP COLUMN status", [])?;
+    }
+    Ok(())
 }
 
 /// Runs `f` against the shared connection (opened on first use). A poisoned
@@ -148,13 +155,13 @@ pub fn upsert_sessions_ref(sessions: &[&(AgentSession, String)]) {
 fn upsert_sessions(sessions: &[&(AgentSession, String)]) -> Result<(), String> {
     let failures = with_db(|conn| {
         let mut stmt = conn.prepare(
-            "INSERT INTO sessions (id, agent, model, project_name, project_path, branch, timestamp, declared_goal, status,
+            "INSERT INTO sessions (id, agent, model, project_name, project_path, branch, timestamp, declared_goal,
                                    files_modified, lines_added, lines_removed, duration_minutes, content_hash, last_seen_at, payload, summary)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
              ON CONFLICT(id) DO UPDATE SET
                agent = excluded.agent, model = excluded.model, project_name = excluded.project_name,
                project_path = excluded.project_path, branch = excluded.branch, timestamp = excluded.timestamp,
-               declared_goal = excluded.declared_goal, status = excluded.status, files_modified = excluded.files_modified,
+               declared_goal = excluded.declared_goal, files_modified = excluded.files_modified,
                lines_added = excluded.lines_added, lines_removed = excluded.lines_removed,
                duration_minutes = excluded.duration_minutes, content_hash = excluded.content_hash,
                last_seen_at = excluded.last_seen_at, payload = excluded.payload, summary = excluded.summary",
@@ -179,7 +186,6 @@ fn upsert_sessions(sessions: &[&(AgentSession, String)]) -> Result<(), String> {
                 s.branch,
                 s.timestamp,
                 s.declared_goal,
-                s.status,
                 s.stats.files_modified,
                 s.stats.lines_added,
                 s.stats.lines_removed,
@@ -456,4 +462,42 @@ pub fn get_blob(hash: &str) -> Result<Option<Vec<u8>>, String> {
         .optional()
     })
     .map_err(|e| format!("Could not read a file snapshot from SQLite: {e}"))
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn an_older_sessions_table_loses_status_and_keeps_its_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        // The 0.10 table: a status column, no summary column
+        conn.execute_batch(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, agent TEXT NOT NULL, model TEXT NOT NULL,
+               project_name TEXT NOT NULL, project_path TEXT, branch TEXT NOT NULL, timestamp TEXT NOT NULL,
+               declared_goal TEXT NOT NULL, status TEXT NOT NULL, files_modified INTEGER NOT NULL,
+               lines_added INTEGER NOT NULL, lines_removed INTEGER NOT NULL, duration_minutes INTEGER NOT NULL,
+               content_hash TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0, archived_at TEXT,
+               last_seen_at TEXT NOT NULL, payload TEXT NOT NULL);
+             CREATE INDEX idx_sessions_inbox ON sessions (archived, timestamp DESC);
+             INSERT INTO sessions VALUES ('s1','a','m','p',NULL,'main','t','g','needs-review',1,1,0,1,'h',0,NULL,'t','{}');",
+        )
+        .unwrap();
+        migrate(&conn).unwrap();
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('sessions')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(!columns.iter().any(|c| c == "status"));
+        assert!(columns.iter().any(|c| c == "summary"));
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+        // Run again on an up-to-date table: nothing to do
+        migrate(&conn).unwrap();
+    }
 }

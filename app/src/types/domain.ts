@@ -8,18 +8,6 @@ export type AgentName = 'claude-code' | 'codex' | 'cursor' | 'copilot' | 'aider'
 
 export type RiskDimension = 'security' | 'database' | 'performance' | 'maintainability';
 
-export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
-
-export interface RiskScore {
-  dimension: RiskDimension;
-  /** 0–100, higher = riskier */
-  score: number;
-  level: RiskLevel;
-  /** One-line reviewer justification */
-  rationale: string;
-  contributingFileIds: string[];
-}
-
 export interface DiffLine {
   kind: 'context' | 'add' | 'del';
   text: string;
@@ -65,15 +53,13 @@ export type FindingSeverity = 'info' | 'low' | 'medium' | 'high' | 'critical';
  * checks and the repo's .ars/rules.json. */
 export interface ReviewerFinding {
   id: string;
+  /** Breaks ties in the order: a potential bug before the rest */
   kind: FindingKind;
   severity: FindingSeverity;
   title: string;
   body: string;
   filePath?: string;
   line?: number;
-  dimension?: RiskDimension;
-  suggestedFix?: string;
-  source?: 'local' | 'custom';
 }
 
 /** A custom review check (Settings → Review checks; repo scope in .ars/rules.json) */
@@ -99,19 +85,6 @@ export interface SystemArea {
   label: string;
   /** Critical zones get highlighted */
   critical: boolean;
-  /** Reserved for format compatibility; no dependencies are inferred. */
-  dependsOn: string[];
-}
-
-export interface SessionStats {
-  filesAnalyzed: number;
-  filesModified: number;
-  linesAdded: number;
-  linesRemoved: number;
-  commandsRun: number;
-  testsRun: number;
-  testsFailed: number;
-  durationMinutes: number;
 }
 
 // ---------------------------------------------------------------------------

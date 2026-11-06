@@ -6,16 +6,16 @@
 // survives unrelated changes.
 
 use super::super::domain::{
-    AgentSession, ChangeType, DiffHunk, DiffLine, DiffLineKind, FileChange, RiskDimension,
-    RiskScore, SystemArea, TimelineEventKind,
+    AgentSession, DiffHunk, DiffLine, DiffLineKind, RiskDimension, RiskScore, SystemArea,
+    TimelineEventKind,
 };
 use super::super::normalize::{
-    area_id_of, is_test_path, language_of, line_check, risk_flags_for, score_to_level, LineCheck,
+    area_id_of, is_test_path, line_check, risk_flags_for, score_to_level, LineCheck,
 };
 use super::super::paths::fold_case;
-use super::super::rules;
+use super::super::rules::{self, RuleFile};
 use super::attribution::{root_relative, session_cwd_rel};
-use super::changes::{hex, ChangedFile, LineKind, Status};
+use super::changes::{hex, ChangedFile, LineKind};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -45,24 +45,13 @@ fn added_lines(f: &ChangedFile) -> Vec<String> {
         .collect()
 }
 
-/// The review files in the session-file shape the rules engine reads.
-fn as_file_changes(files: &[ChangedFile]) -> Vec<FileChange> {
+/// The review files as the rules engine reads them: path and hunks.
+fn as_rule_files(files: &[ChangedFile]) -> Vec<RuleFile> {
     files
         .iter()
-        .map(|f| FileChange {
+        .map(|f| RuleFile {
             id: f.path.clone(),
             path: f.path.clone(),
-            change_type: match f.status {
-                Status::Added | Status::Untracked => ChangeType::Created,
-                Status::Deleted => ChangeType::Deleted,
-                _ => ChangeType::Modified,
-            },
-            language: language_of(&f.path),
-            lines_added: f.added,
-            lines_removed: f.removed,
-            area_id: String::new(),
-            risk_flags: Vec::new(),
-            summary: String::new(),
             hunks: f
                 .hunks
                 .iter()
@@ -103,7 +92,6 @@ pub fn assess(root: &str, files: &[ChangedFile], rules_config: &[Value]) -> Asse
                 id: area_id.clone(),
                 label: top,
                 critical: false,
-                depends_on: Vec::new(), // folder groups carry no inferred dependency edges
             });
         }
         let flags = risk_flags_for(&f.path, &added_lines(f), f.added);
@@ -276,7 +264,7 @@ pub fn assess(root: &str, files: &[ChangedFile], rules_config: &[Value]) -> Asse
     let mut active = rules::parse_rules(rules_config);
     active.extend(rules::repo_rules_for(Some(root)));
     if !active.is_empty() {
-        let changes = as_file_changes(files);
+        let changes = as_rule_files(files);
         let text_at: HashMap<(&str, i64), &str> = files
             .iter()
             .flat_map(|f| {

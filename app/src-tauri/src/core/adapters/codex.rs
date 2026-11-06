@@ -15,7 +15,6 @@ const MIN_FILE_BYTES: u64 = 2_000;
 static PATCH_FILE_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\*\*\* (Add|Update|Delete) File: (.+)$").unwrap());
 static SHELL_TOOL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)shell|exec|command").unwrap());
-static HUNK_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^@@.*@@\s?").unwrap());
 
 /// Truthy: a non-empty string, a non-zero number, true, or any array/object.
 fn is_truthy(v: &Value) -> bool {
@@ -74,17 +73,6 @@ fn push_event(timeline: &mut Vec<TimelineEvent>, seq: &mut u64, d: TimelineEvent
     });
 }
 
-fn flush_hunk(file_map: &mut [RawFile], current: Option<usize>, hunk_lines: &mut Vec<DiffLine>) {
-    if let Some(i) = current {
-        if !hunk_lines.is_empty() {
-            let lines: Vec<DiffLine> = hunk_lines.iter().take(120).cloned().collect();
-            let header = format!("@@ {} @@", file_map[i].path);
-            file_map[i].hunks.push(DiffHunk { header, lines });
-            hunk_lines.clear();
-        }
-    }
-}
-
 /// One file section of an apply_patch envelope: (path, added, removed).
 type PatchSection = (String, Vec<String>, Vec<String>);
 
@@ -98,11 +86,9 @@ fn parse_apply_patch(
 ) -> Vec<String> {
     let mut touched: Vec<String> = Vec::new();
     let mut current: Option<usize> = None;
-    let mut hunk_lines: Vec<DiffLine> = Vec::new();
 
     for line in input.split('\n') {
         if let Some(m) = PATCH_FILE_RE.captures(line) {
-            flush_hunk(file_map, current, &mut hunk_lines);
             let action = m.get(1).map(|x| x.as_str()).unwrap_or("");
             let path = m
                 .get(2)
@@ -139,35 +125,13 @@ fn parse_apply_patch(
             }
             file_map[idx].added += 1;
             file_map[idx].added_lines.push(rest.to_string());
-            hunk_lines.push(DiffLine {
-                kind: DiffLineKind::Add,
-                text: rest.to_string(),
-                old_line: None,
-                new_line: None,
-            });
         } else if let Some(rest) = line.strip_prefix('-') {
             if let Some((_, _, removed)) = section {
                 removed.push(rest.to_string());
             }
             file_map[idx].removed += 1;
-            hunk_lines.push(DiffLine {
-                kind: DiffLineKind::Del,
-                text: rest.to_string(),
-                old_line: None,
-                new_line: None,
-            });
-        } else if line.starts_with(' ') || line.starts_with("@@") {
-            let stripped = HUNK_HEADER_RE.replace(line, "").to_string();
-            let text = stripped.strip_prefix(' ').unwrap_or(&stripped).to_string();
-            hunk_lines.push(DiffLine {
-                kind: DiffLineKind::Context,
-                text,
-                old_line: None,
-                new_line: None,
-            });
         }
     }
-    flush_hunk(file_map, current, &mut hunk_lines);
     touched
 }
 
@@ -241,7 +205,6 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
     let mut commands_run: i64 = 0;
     let mut tests_run: i64 = 0;
     let mut tests_failed: i64 = 0;
-    let mut errors: i64 = 0;
     let mut timeline: Vec<TimelineEvent> = Vec::new();
     // Insertion-ordered path → RawFile map.
     let mut file_map: Vec<RawFile> = Vec::new();
@@ -477,7 +440,6 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
             }
             if let Some(exit_code) = exit {
                 if exit_code != 0 {
-                    errors += 1;
                     let call_id = pstr(p, "call_id");
                     let cmd = call_by_id
                         .iter()
@@ -540,7 +502,6 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
         commands_run,
         tests_run,
         tests_failed,
-        errors,
         duration_minutes: dur,
     })?;
     session.turns = turns;
@@ -705,13 +666,8 @@ mod tests {
         assert_eq!(session.files[0].path, "src/old.ts");
         assert_eq!(session.files[0].change_type, ChangeType::Deleted);
         assert_eq!(session.files[1].change_type, ChangeType::Modified);
-        // Unanchored (no line numbers) local findings still fire.
-        let todo = session
-            .findings
-            .iter()
-            .find(|f| f["filePath"] == "src/a.ts")
-            .expect("leftover TODO finding");
-        assert!(todo.get("line").is_none());
+        // The patch without line numbers is still a recorded edit
+        assert!(session.edits.iter().any(|e| e.path == "src/a.ts"));
     }
 
     #[test]

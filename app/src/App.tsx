@@ -5,7 +5,7 @@ import { SessionsProvider } from './state/sessionsStore';
 import { ProjectsHome } from './features/home/ProjectsHome';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { IconArrowLeft, IconSettings } from './components/icons';
-import { closeWindow, isDesktop, minimizeWindow, toggleMaximizeWindow } from './lib/desktop';
+import { closeWindow, isDesktop, minimizeWindow, platform, toggleMaximizeWindow } from './lib/desktop';
 
 // Code splitting by route: the projects home is the first paint and stays
 // in the main chunk; the review (the diff viewer and its grammars) and
@@ -69,7 +69,7 @@ function TopBar() {
   const { pathname } = useLocation();
 
   return (
-    <header className={`topbar${desktop ? ' topbar-desktop' : ''}`} data-tauri-drag-region="">
+    <header className={`topbar${desktop ? ` topbar-desktop on-${platform}` : ''}`} data-tauri-drag-region="">
       <NavLink to="/" className="topbar-brand" title="All projects">
         <span>A</span>RS
       </NavLink>
@@ -80,7 +80,7 @@ function TopBar() {
         <IconSettings size={15} />
       </NavLink>
       <ThemeToggle />
-      {desktop && (
+      {desktop && platform !== 'macos' && (
         <div className="win-controls">
           <button className="win-btn" title="Minimize" aria-label="Minimize" onClick={minimizeWindow}>
             <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" strokeWidth="1.2" /></svg>

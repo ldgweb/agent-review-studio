@@ -334,20 +334,6 @@ fn do_scan() -> Arc<ScanState> {
     let mut live_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     live.retain(|s| live_ids.insert(s.session_id.clone()));
 
-    // 1b. Custom review checks: global rules (Settings) + the repo's own
-    // .ars/rules.json. Applied before hashing, so findings are part of
-    // session_hash.
-    let global_rules = super::rules::parse_rules(&config.finding_rules);
-    for session in live.iter_mut() {
-        let mut combined = global_rules.clone();
-        combined.extend(super::rules::repo_rules_for(
-            session.project_path.as_deref(),
-        ));
-        if !combined.is_empty() {
-            super::rules::apply_rules(session, &combined);
-        }
-    }
-
     // 2. Hash once per live session; upsert ONLY new/changed rows.
     let stored_hashes = storage::all_content_hashes();
     let hashed: Vec<(AgentSession, String)> = live

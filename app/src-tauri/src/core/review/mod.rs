@@ -13,13 +13,14 @@
 pub mod assess;
 pub mod attribution;
 pub mod changes;
+pub mod definition;
 pub mod noise;
 pub mod package;
 pub mod state;
 
 use super::config::load_config;
 use super::domain::{
-    AgentSession, RiskDimension, RiskScore, SessionStats, SessionTurn, SystemArea, TimelineEvent,
+    AgentSession, RiskDimension, RiskScore, SessionTurn, SystemArea, TimelineEvent,
 };
 use super::git::{checked_file, git_raw, is_safe_rel};
 use super::normalize::{language_of, parse_date};
@@ -110,9 +111,6 @@ pub struct ReviewFile {
 pub struct EditGroup {
     pub id: String,
     pub hunk_ids: Vec<String>,
-    pub paths: Vec<String>,
-    /// The first changed line, to recognize the change at a glance
-    pub preview: String,
 }
 
 #[derive(Serialize)]
@@ -124,13 +122,8 @@ pub struct SessionContext {
     pub model: String,
     pub timestamp: String,
     pub last_activity: String,
-    pub project_path: Option<String>,
-    pub branch: String,
     pub original_prompt: String,
-    pub declared_goal: String,
-    pub initial_plan: Vec<String>,
     pub outcome: String,
-    pub stats: SessionStats,
     pub timeline: Vec<TimelineEvent>,
     pub turns: Vec<SessionTurn>,
     /// Hunks of the review this session's recorded edits explain
@@ -352,38 +345,12 @@ fn context_of(s: AgentSession, attributed: usize) -> SessionContext {
         model: s.model,
         timestamp: s.timestamp,
         last_activity: last,
-        project_path: s.project_path,
-        branch: s.branch,
         original_prompt: s.original_prompt,
-        declared_goal: s.declared_goal,
-        initial_plan: s.initial_plan,
         outcome: s.outcome,
-        stats: s.stats,
         timeline: s.timeline.into_iter().skip(skip).collect(),
         turns: s.turns,
         attributed_hunks: attributed,
     }
-}
-
-fn preview_of(files: &[ReviewFile], hunk_id: &str) -> String {
-    files
-        .iter()
-        .flat_map(|f| &f.hunks)
-        .find(|h| h.id == hunk_id)
-        .and_then(|h| {
-            h.lines
-                .iter()
-                .find(|l| l.kind != LineKind::Context && !l.text.trim().is_empty())
-        })
-        .map(|l| {
-            format!(
-                "{}{}",
-                if l.kind == LineKind::Add { "+ " } else { "- " },
-                l.text.trim()
-            )
-        })
-        .map(|t| t.chars().take(120).collect())
-        .unwrap_or_default()
 }
 
 /// Build the review of the project containing `project`.
@@ -535,6 +502,14 @@ pub fn build(project: &str) -> Result<ProjectReview, String> {
             digest.update(h.id.as_bytes());
             digest.update(origin.kind.as_bytes());
             digest.update(origin.event_id.as_deref().unwrap_or("").as_bytes());
+            for step in &origin.steps {
+                digest.update(
+                    step.event_id
+                        .as_deref()
+                        .unwrap_or(&step.timestamp)
+                        .as_bytes(),
+                );
+            }
             review_hunks.push(ReviewHunk {
                 noise: noise::hunk_noise(&h, &language_of(&path)),
                 group: group_of.get(&h.id).cloned(),
@@ -596,16 +571,7 @@ pub fn build(project: &str) -> Result<ProjectReview, String> {
     }
     let groups: Vec<EditGroup> = groups
         .into_iter()
-        .map(|(id, hunk_ids)| EditGroup {
-            preview: preview_of(&files, &hunk_ids[0]),
-            paths: files
-                .iter()
-                .filter(|f| f.hunks.iter().any(|h| h.group.as_deref() == Some(&id)))
-                .map(|f| f.path.clone())
-                .collect(),
-            id,
-            hunk_ids,
-        })
+        .map(|(id, hunk_ids)| EditGroup { id, hunk_ids })
         .collect();
 
     // Context: sessions that explain something, plus the newest one.
@@ -1065,6 +1031,9 @@ fn root_of(path: &str) -> (String, bool) {
     found
 }
 
+/// Sessions a project row on the home screen lists
+const ROW_SESSIONS: usize = 3;
+
 struct ProjectRow {
     root: String,
     git: bool,
@@ -1073,7 +1042,6 @@ struct ProjectRow {
     session_ids: Vec<String>,
     session_count: usize,
     archived_count: usize,
-    agents: Vec<String>,
     last_activity: String,
     reviewed_at: Option<String>,
 }
@@ -1087,7 +1055,6 @@ impl ProjectRow {
             session_ids: Vec::new(),
             session_count: 0,
             archived_count: 0,
-            agents: Vec::new(),
             last_activity: String::new(),
             reviewed_at: None,
         }
@@ -1099,20 +1066,15 @@ impl ProjectRow {
         if archived {
             self.archived_count += 1;
         }
-        if !self.agents.contains(&s.agent_label) {
-            self.agents.push(s.agent_label.clone());
-        }
         if s.timestamp > self.last_activity {
             self.last_activity = s.timestamp.clone();
         }
-        if self.sessions.len() < 5 && !archived {
+        if self.sessions.len() < ROW_SESSIONS && !archived {
             self.sessions.push(json!({
                 "sessionId": s.session_id,
                 "agent": s.agent,
                 "agentLabel": s.agent_label,
                 "declaredGoal": s.declared_goal,
-                "timestamp": s.timestamp,
-                "filesModified": s.stats.files_modified,
             }));
         }
     }
@@ -1137,10 +1099,7 @@ impl ProjectRow {
             "hidden": self.all_archived(),
             "sessions": self.sessions,
             "sessionIds": self.session_ids,
-            "sessionCount": self.session_count,
-            "agents": self.agents,
             "lastActivity": self.last_activity,
-            "reviewedAt": self.reviewed_at,
             "changes": changes,
         })
     }

@@ -11,8 +11,6 @@ import type {
   FindingReviewState,
   ReviewerFinding,
   RiskDimension,
-  RiskScore,
-  SessionStats,
   SystemArea,
   TimelineEvent,
 } from './domain';
@@ -43,6 +41,20 @@ export interface HunkOrigin {
   total: number;
   /** For unexplained lines: the newest command that names the file */
   commandHint?: { sessionId: string; eventId: string; command: string };
+  /** Every recorded edit that wrote some of the changed lines, oldest first */
+  steps?: EditStep[];
+}
+
+/** One recorded edit behind a change */
+export interface EditStep {
+  sessionId: string;
+  timestamp: string;
+  /** The agent's words right before the edit */
+  rationale?: string;
+  /** The edit's event in the session's timeline */
+  eventId?: string;
+  /** How many of the change's lines this edit wrote */
+  lines: number;
 }
 
 export interface ReviewHunk {
@@ -101,13 +113,8 @@ export interface SessionContext {
   model: string;
   timestamp: string;
   lastActivity: string;
-  projectPath?: string;
-  branch: string;
   originalPrompt: string;
-  declaredGoal: string;
-  initialPlan: string[];
   outcome: string;
-  stats: SessionStats;
   timeline: TimelineEvent[];
   turns: SessionTurn[];
   attributedHunks: number;
@@ -116,8 +123,6 @@ export interface SessionContext {
 export interface EditGroup {
   id: string;
   hunkIds: string[];
-  paths: string[];
-  preview: string;
 }
 
 export interface ReviewComment {
@@ -185,7 +190,6 @@ export interface ProjectReview {
   sessions: SessionContext[];
   findings: ReviewerFinding[];
   groups: EditGroup[];
-  risks: RiskScore[];
   areas: SystemArea[];
   state: ReviewState;
   stateRev: number;
@@ -204,6 +208,23 @@ export interface ProjectReview {
   package: AgentPackage;
 }
 
+/** Where a name is defined: found by name, so possibly more than one */
+export interface DefinitionResult {
+  name: string;
+  /** Lines that looked like a definition, before keeping the best few */
+  total: number;
+  matches: Array<{
+    path: string;
+    line: number;
+    /** The comment right above it */
+    doc: string[];
+    /** The definition, down to the end of its body */
+    code: string[];
+    /** Lines of it left out, past what a peek shows */
+    more?: number;
+  }>;
+}
+
 /** A project on the home screen */
 export interface ProjectRow {
   root: string;
@@ -220,13 +241,8 @@ export interface ProjectRow {
     agent: AgentName;
     agentLabel: string;
     declaredGoal: string;
-    timestamp: string;
-    filesModified: number;
   }>;
-  sessionCount: number;
-  agents: string[];
   lastActivity: string;
-  reviewedAt?: string | null;
   /** Uncommitted changes (null: not a Git repo or unreadable) */
   changes?: number | null;
 }

@@ -1,11 +1,19 @@
-// Desktop-shell integration. In the Tauri app the window has no native
-// decorations: the app draws its own title bar and drives the window through
-// these helpers. In the browser (dev / plain web) the window helpers no-op.
+// Desktop-shell integration. In the Tauri app the app draws its own title
+// bar and drives the window through these helpers. On macOS the system's
+// window buttons stay, over the bar's left end. In the browser (dev / plain
+// web) the window helpers no-op.
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { apiFetch, isDesktop } from './api';
 
 export { isDesktop };
+
+/** The system the app runs on, for the few things that differ */
+export const platform: 'windows' | 'macos' | 'linux' = navigator.userAgent.includes('Windows')
+  ? 'windows'
+  : navigator.userAgent.includes('Mac')
+    ? 'macos'
+    : 'linux';
 
 export function minimizeWindow(): void {
   if (isDesktop()) void getCurrentWindow().minimize();

@@ -342,7 +342,9 @@ fn project_root_of(dir: &str) -> Result<String, String> {
     Ok(review::changes::toplevel(&plain).unwrap_or(plain))
 }
 
-/// The desktop executable shipped next to ars (installer and portable ZIP).
+/// The desktop executable shipped next to ars: in the Windows install folder
+/// and ZIP, in the macOS app's `Contents/MacOS`, in `/usr/bin` for the Linux
+/// packages.
 fn desktop_exe() -> Option<PathBuf> {
     let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
     let name = format!("agent-review-studio{}", std::env::consts::EXE_SUFFIX);
@@ -376,6 +378,12 @@ fn open_in_desktop(dir: &str) {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    // Its own process group: closing the terminal does not close the app.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
     match cmd.spawn() {
         Ok(_) => println!("ars: opening the review of {project}"),

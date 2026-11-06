@@ -42,5 +42,5 @@ body:
   - type: input
     id: os
     attributes:
-      label: Windows version
-      placeholder: "Windows 11 23H2"
+      label: System and version
+      placeholder: "Windows 11 23H2, macOS 15.1, Ubuntu 24.04…"

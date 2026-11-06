@@ -47,7 +47,30 @@ pub struct Origin {
     /// For unexplained lines: the newest command that names the file
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command_hint: Option<CommandHint>,
+    /// Every recorded edit that wrote some of the changed lines, oldest
+    /// first: the story of this change, step by step
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<EditStep>,
 }
+
+/// One recorded edit behind a hunk.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditStep {
+    pub session_id: String,
+    pub timestamp: String,
+    /// The agent's words right before the edit
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+    /// The edit's event in the session's timeline
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<String>,
+    /// How many of the hunk's changed lines this edit wrote
+    pub lines: usize,
+}
+
+/// The most steps one hunk lists: the newest ones
+const MAX_STEPS: usize = 8;
 
 impl Origin {
     pub(crate) fn none(total: usize) -> Self {
@@ -63,6 +86,7 @@ impl Origin {
             matched: 0,
             total,
             command_hint: None,
+            steps: Vec::new(),
         }
     }
 }
@@ -165,6 +189,26 @@ fn command_hint(sessions: &[AgentSession], path: &str) -> Option<CommandHint> {
     None
 }
 
+/// The edits that wrote some of a hunk's lines (`wrote[i]` lines for
+/// `edits[i]`, which come newest first), oldest first, at most MAX_STEPS.
+fn steps(edits: &[EditRef], wrote: &[usize], sessions: &[AgentSession]) -> Vec<EditStep> {
+    let mut out: Vec<EditStep> = edits
+        .iter()
+        .zip(wrote)
+        .filter(|(_, &n)| n > 0)
+        .take(MAX_STEPS)
+        .map(|(e, &n)| EditStep {
+            session_id: sessions[e.session].session_id.clone(),
+            timestamp: e.edit.timestamp.clone(),
+            rationale: (!e.edit.rationale.is_empty()).then(|| e.edit.rationale.clone()),
+            event_id: e.edit.event_id.clone(),
+            lines: n,
+        })
+        .collect();
+    out.reverse();
+    out
+}
+
 /// Attribute every hunk of `files`. `sessions` come newest first.
 pub fn attribute(root: &str, files: &[ChangedFile], sessions: &[AgentSession]) -> Attribution {
     // path → edits on it, newest first
@@ -214,16 +258,25 @@ pub fn attribute(root: &str, files: &[ChangedFile], sessions: &[AgentSession]) -
                 // Each line goes to the newest edit that wrote it (or, for a
                 // deletion-only hunk, removed it).
                 let mut counts: Vec<usize> = vec![0; edits.len()];
+                // Lines each edit wrote, newest or not: the hunk's steps
+                let mut wrote: Vec<usize> = vec![0; edits.len()];
                 let mut matched = 0;
                 for t in &targets {
-                    let hit = edits.iter().position(|e| {
+                    let writes = |e: &EditRef| {
                         if adds {
                             e.added.contains(t)
                         } else {
                             e.removed.contains(t)
                         }
-                    });
-                    if let Some(i) = hit {
+                    };
+                    let mut first = None;
+                    for (i, e) in edits.iter().enumerate() {
+                        if writes(e) {
+                            wrote[i] += 1;
+                            first.get_or_insert(i);
+                        }
+                    }
+                    if let Some(i) = first {
                         counts[i] += 1;
                         matched += 1;
                     }
@@ -255,6 +308,7 @@ pub fn attribute(root: &str, files: &[ChangedFile], sessions: &[AgentSession]) -
                         matched,
                         total: targets.len(),
                         command_hint: None,
+                        steps: steps(edits, &wrote, sessions),
                     };
                     *out.per_session.entry(s.session_id.clone()).or_default() += 1;
                 }
@@ -347,5 +401,40 @@ mod tests {
             Some("python patch.py app/cart.ts")
         );
         assert_eq!(a.file_sessions["app/cart.ts"], vec!["s1".to_string()]);
+        assert_eq!(o(0).steps.len(), 1);
+        assert_eq!(o(0).steps[0].lines, 2);
+        assert_eq!(o(0).steps[0].event_id.as_deref(), Some("ev-9"));
+        assert!(o(2).steps.is_empty(), "an unexplained hunk has no steps");
+    }
+
+    #[test]
+    fn a_change_written_in_two_edits_lists_both_oldest_first() {
+        let files = parse_diff(concat!(
+            "diff --git a/cart.ts b/cart.ts\n--- a/cart.ts\n+++ b/cart.ts\n",
+            "@@ -1,1 +1,3 @@\n ctx\n+const total = round(sum);\n+return total;\n",
+        ));
+        let mut first = edit(
+            "cart.ts",
+            &["const total = sum;", "return total;"],
+            "Add the total.",
+        );
+        first.event_id = Some("ev-3".into());
+        let mut second = edit("cart.ts", &["const total = round(sum);"], "Round it.");
+        second.seq = 2;
+        second.event_id = Some("ev-7".into());
+        let sessions = vec![session("s1", "C:/repo", vec![first, second], &[])];
+        let a = attribute("C:/repo", &files, &sessions);
+        let o = &a.hunks[&files[0].hunks[0].id];
+        let steps: Vec<(&str, usize)> = o
+            .steps
+            .iter()
+            .map(|s| (s.event_id.as_deref().unwrap_or(""), s.lines))
+            .collect();
+        assert_eq!(steps, vec![("ev-3", 1), ("ev-7", 1)]);
+        assert_eq!(
+            o.rationale.as_deref(),
+            Some("Round it."),
+            "ties go to the newest edit"
+        );
     }
 }

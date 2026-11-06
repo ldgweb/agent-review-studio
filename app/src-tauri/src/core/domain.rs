@@ -1,15 +1,14 @@
-// The domain model: only what the ingestion pipeline produces. It mirrors
-// src/types/domain.ts (camelCase keys, optional fields omitted when absent);
-// the serialization is pinned by the fixture contract in the repo-root
-// fixtures/, verified by `cargo test`.
+// The domain model: only what the ingestion pipeline produces (camelCase
+// keys, optional fields omitted when absent). The serialization is pinned
+// by the fixture contract in the repo-root fixtures/, verified by
+// `cargo test`; the frontend's src/types mirror the parts it reads.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Strip a serialized session down to its list shape: the session list
-/// needs metadata, stats and risk, not the diff hunks or the full timeline.
-/// Keys stay present (empty arrays) so the summary still fits the frontend's
-/// `AgentSession` type (src/types/domain.ts).
+/// (`ars list`) needs metadata, stats and risk, not the full timeline.
+/// Keys stay present (empty arrays), so the shape is the same.
 pub fn strip_to_summary(v: &mut Value) {
     let Some(map) = v.as_object_mut() else { return };
     if map.contains_key("timeline") {
@@ -18,15 +17,6 @@ pub fn strip_to_summary(v: &mut Value) {
     // Attribution input: heavy, and only the project review reads it.
     map.remove("edits");
     map.remove("turns");
-    if let Some(files) = map.get_mut("files").and_then(Value::as_array_mut) {
-        for file in files {
-            if let Some(f) = file.as_object_mut() {
-                if f.contains_key("hunks") {
-                    f.insert("hunks".into(), json!([]));
-                }
-            }
-        }
-    }
 }
 
 /// The summary (list) serialization of a session.
@@ -156,7 +146,6 @@ pub struct SystemArea {
     pub id: String,
     pub label: String,
     pub critical: bool,
-    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,19 +156,17 @@ pub enum ChangeType {
     Deleted,
 }
 
+/// A file a session changed, as counts: the changed lines themselves are
+/// read from Git when the project is reviewed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub id: String,
     pub path: String,
     pub change_type: ChangeType,
-    pub language: String,
     pub lines_added: i64,
     pub lines_removed: i64,
-    pub area_id: String,
     pub risk_flags: Vec<RiskDimension>,
-    pub summary: String,
-    pub hunks: Vec<DiffHunk>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,23 +182,13 @@ pub struct SessionStats {
     pub duration_minutes: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionSummary {
-    pub text: String,
-    pub impacted_areas: Vec<String>,
-    pub risk_warnings: Vec<String>,
-}
-
-/// THE primary entity: the full lifecycle of an agent working on a task.
-/// `findings` holds the line-anchored local findings the normalizer emits
-/// (opaque `Value`s: the frontend owns their shape).
+/// THE primary entity: what an agent did on a task. The project review
+/// reads its requests, timeline and recorded edits to explain the changes
+/// Git shows; `ars list` reads its counts and risk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
     pub session_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source: Option<String>,
     pub timestamp: String,
     pub agent: String,
     pub agent_label: String,
@@ -223,15 +200,11 @@ pub struct AgentSession {
     pub original_prompt: String,
     pub declared_goal: String,
     pub initial_plan: Vec<String>,
-    pub status: String,
     pub outcome: String,
     pub stats: SessionStats,
-    pub summary: SessionSummary,
-    pub system_areas: Vec<SystemArea>,
     pub files: Vec<FileChange>,
     pub timeline: Vec<TimelineEvent>,
     pub risks: Vec<RiskScore>,
-    pub findings: Vec<Value>,
     /// The human prompts of the session, in order (turn 0 is the original
     /// prompt). Empty for sources that do not record them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -321,7 +294,6 @@ pub struct RawFile {
     pub deleted: bool,
     pub added: i64,
     pub removed: i64,
-    pub hunks: Vec<DiffHunk>,
     /// Added source lines, used for content-based risk detection
     pub added_lines: Vec<String>,
 }
@@ -334,7 +306,6 @@ impl RawFile {
             deleted: false,
             added: 0,
             removed: 0,
-            hunks: Vec::new(),
             added_lines: Vec::new(),
         }
     }
@@ -360,6 +331,5 @@ pub struct RawSession {
     pub commands_run: i64,
     pub tests_run: i64,
     pub tests_failed: i64,
-    pub errors: i64,
     pub duration_minutes: i64,
 }

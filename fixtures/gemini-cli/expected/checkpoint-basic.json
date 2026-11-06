@@ -1,8 +1,7 @@
 {
-  "sessionHash": "43e91194e067285be6699a763e5672fd681f87175e94eae6a87f9d785a3127f3",
+  "sessionHash": "c2afc7abf2449bc966b9eee9e2bd663bce93e3ff7365ebee3bf81a82712060e4",
   "session": {
     "sessionId": "checkpoint-basic",
-    "source": "live",
     "timestamp": "2026-03-10T12:00:00.000Z",
     "agent": "gemini-cli",
     "agentLabel": "Gemini CLI",
@@ -13,7 +12,6 @@
     "originalPrompt": "Add rate limiting to the login endpoint",
     "declaredGoal": "Add rate limiting to the login endpoint",
     "initialPlan": [],
-    "status": "needs-review",
     "outcome": "I added rate limiting with a 5-attempt window per minute and created a dedicated rateLimit module. Two tests still fail and need attention.",
     "stats": {
       "filesAnalyzed": 1,
@@ -25,87 +23,22 @@
       "testsFailed": 1,
       "durationMinutes": 1
     },
-    "summary": {
-      "text": "Ingested from a live Gemini CLI transcript. The agent changed 2 files (+6 −1) across (root), ran 1 command and 1 test run.",
-      "impactedAreas": [
-        "(root)"
-      ],
-      "riskWarnings": [
-        "1 tool call failed during the session."
-      ]
-    },
-    "systemAreas": [
-      {
-        "id": "area--root-",
-        "label": "(root)",
-        "critical": false,
-        "dependsOn": []
-      }
-    ],
     "files": [
       {
         "id": "lf-1",
         "path": "config.ts",
         "changeType": "modified",
-        "language": "ts",
         "linesAdded": 2,
         "linesRemoved": 1,
-        "areaId": "area--root-",
-        "riskFlags": [],
-        "summary": "Modified — +2 −1 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ config.ts @@",
-            "lines": [
-              {
-                "kind": "del",
-                "text": "const MAX_ATTEMPTS = 100;"
-              },
-              {
-                "kind": "add",
-                "text": "const MAX_ATTEMPTS = 5;"
-              },
-              {
-                "kind": "add",
-                "text": "const WINDOW_MS = 60_000;"
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       },
       {
         "id": "lf-2",
         "path": "rateLimit.ts",
         "changeType": "created",
-        "language": "ts",
         "linesAdded": 4,
         "linesRemoved": 0,
-        "areaId": "area--root-",
-        "riskFlags": [],
-        "summary": "Created — +4 −0 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ rateLimit.ts @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "export function rateLimit() {"
-              },
-              {
-                "kind": "add",
-                "text": "  return true;"
-              },
-              {
-                "kind": "add",
-                "text": "}"
-              },
-              {
-                "kind": "add",
-                "text": ""
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       }
     ],
     "timeline": [
@@ -179,7 +112,6 @@
         "rationale": "2 files changed, +6 lines added in one session.",
         "contributingFileIds": []
       }
-    ],
-    "findings": []
+    ]
   }
 }

@@ -1,10 +1,5 @@
 export function formatTime(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-function formatTimeShort(iso: string): string {
-  const d = new Date(iso);
   return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -14,7 +9,7 @@ function formatDate(iso: string): string {
 }
 
 export function formatDateTime(iso: string): string {
-  return `${formatDate(iso)}, ${formatTimeShort(iso)}`;
+  return `${formatDate(iso)}, ${formatTime(iso)}`;
 }
 
 /** Compact age for lists: "now", "5m", "3h", "2d", then a short date */

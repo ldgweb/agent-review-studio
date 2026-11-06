@@ -1,8 +1,7 @@
 {
-  "sessionHash": "11f1d13b1f2dcde97120f3b5a2ba3c47fa76f3897954c135fb49cddbd0dedc83",
+  "sessionHash": "91c9f865ef385a11ed499d3b9a1ca5a1616e679abbd8ccde545ebf018e51d949",
   "session": {
     "sessionId": "copilot-0001",
-    "source": "live",
     "timestamp": "2026-07-13T11:30:00.000Z",
     "agent": "copilot",
     "agentLabel": "GitHub Copilot",
@@ -16,7 +15,6 @@
       "Extract shared email header",
       "Slim down order-shipped template"
     ],
-    "status": "needs-review",
     "outcome": "The order-confirmed template now reuses the shared header partial as well.",
     "stats": {
       "filesAnalyzed": 1,
@@ -28,100 +26,30 @@
       "testsFailed": 0,
       "durationMinutes": 15
     },
-    "summary": {
-      "text": "Ingested from a live GitHub Copilot transcript. The agent changed 3 files (+5 −14) across (root), ran 1 command and 0 test runs.",
-      "impactedAreas": [
-        "(root)"
-      ],
-      "riskWarnings": []
-    },
-    "systemAreas": [
-      {
-        "id": "area--root-",
-        "label": "(root)",
-        "critical": false,
-        "dependsOn": []
-      }
-    ],
     "files": [
       {
         "id": "lf-1",
         "path": "email-header.php",
         "changeType": "created",
-        "language": "php",
         "linesAdded": 3,
         "linesRemoved": 0,
-        "areaId": "area--root-",
-        "riskFlags": [],
-        "summary": "Created — +3 −0 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ email-header.php:1 @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "<table class=\"email-header\">",
-                "newLine": 1
-              },
-              {
-                "kind": "add",
-                "text": "  <tr><td><img src=\"<?= $logo_url ?>\" alt=\"<?= $site_name ?>\"></td></tr>",
-                "newLine": 2
-              },
-              {
-                "kind": "add",
-                "text": "</table>",
-                "newLine": 3
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       },
       {
         "id": "lf-2",
         "path": "order-shipped.php",
         "changeType": "modified",
-        "language": "php",
         "linesAdded": 1,
         "linesRemoved": 9,
-        "areaId": "area--root-",
-        "riskFlags": [],
-        "summary": "Modified — +1 −9 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ order-shipped.php:3 @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "<?php include __DIR__ . '/email-header.php'; ?>",
-                "newLine": 3
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       },
       {
         "id": "lf-3",
         "path": "order-confirmed.php",
         "changeType": "modified",
-        "language": "php",
         "linesAdded": 1,
         "linesRemoved": 5,
-        "areaId": "area--root-",
-        "riskFlags": [],
-        "summary": "Modified — +1 −5 lines in this session.",
-        "hunks": [
-          {
-            "header": "@@ order-confirmed.php:2 @@",
-            "lines": [
-              {
-                "kind": "add",
-                "text": "<?php include __DIR__ . '/email-header.php'; ?>",
-                "newLine": 2
-              }
-            ]
-          }
-        ]
+        "riskFlags": []
       }
     ],
     "timeline": [
@@ -195,7 +123,6 @@
         "rationale": "3 files changed, +5 lines added in one session.",
         "contributingFileIds": []
       }
-    ],
-    "findings": []
+    ]
   }
 }

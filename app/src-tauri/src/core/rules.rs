@@ -1,6 +1,5 @@
 // Custom review checks: user-defined rules that run on every project review
-// (core/review/assess.rs) and on each scanned session, next to the built-in
-// line checks.
+// (core/review/assess.rs), next to the built-in line checks.
 //
 // Two scopes, merged:
 //   - global rules from ~/.agent-review-studio/config.json (`findingRules`),
@@ -11,11 +10,9 @@
 // A rule matches either the ADDED LINES of a file's diff (line-anchored
 // finding) or the file PATH (file-level finding). Patterns are Rust regex
 // (no lookaround). Invalid or disabled rules are skipped silently: a broken
-// custom rule must never break a review or a scan. Findings carry source
-// "custom". In a session they land in session.findings, so they are part
-// of session_hash.
+// custom rule must never break a review. Findings carry source "custom".
 
-use super::domain::{AgentSession, DiffLineKind, FileChange};
+use super::domain::{DiffHunk, DiffLineKind};
 use super::normalize::truncate;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -24,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Mutex;
 
-/// Findings one rule may emit per review or session: a runaway pattern
+/// Findings one rule may emit per review: a runaway pattern
 /// (e.g. `.`) must not flood the review.
 const MAX_FINDINGS_PER_RULE: usize = 20;
 
@@ -187,14 +184,16 @@ pub fn repo_rules_problem(root: &str) -> Option<String> {
     }
 }
 
-/// Evaluate the rules against one normalized session, appending findings.
-pub fn apply_rules(session: &mut AgentSession, rules: &[Rule]) {
-    let found = findings_for(&session.files, rules);
-    session.findings.extend(found);
+/// What the rules read of a changed file: its path and its hunks. `id`
+/// makes the finding ids.
+pub struct RuleFile {
+    pub id: String,
+    pub path: String,
+    pub hunks: Vec<DiffHunk>,
 }
 
 /// The findings `rules` raise on `files` (their paths and added lines).
-pub fn findings_for(files: &[FileChange], rules: &[Rule]) -> Vec<Value> {
+pub fn findings_for(files: &[RuleFile], rules: &[Rule]) -> Vec<Value> {
     let mut found: Vec<Value> = Vec::new();
     for rule in rules {
         let mut hits = 0usize;
@@ -320,20 +319,29 @@ mod tests {
 
     #[test]
     fn finding_ids_are_unique_without_line_numbers() {
-        // The Codex fixture's hunks carry no line numbers.
-        let expected: Value =
-            serde_json::from_str(&super::super::fixture::read("codex/expected/basic.json"))
-                .expect("json");
-        let mut session: AgentSession =
-            serde_json::from_value(expected["session"].clone()).expect("session");
-        let before = session.findings.len();
+        use super::super::domain::DiffLine;
+        // Added lines without line numbers, as some hunks have them
+        let line = |text: &str| DiffLine {
+            kind: DiffLineKind::Add,
+            text: text.into(),
+            old_line: None,
+            new_line: None,
+        };
+        let files = vec![RuleFile {
+            id: "a.ts".into(),
+            path: "a.ts".into(),
+            hunks: vec![DiffHunk {
+                header: "@@".into(),
+                lines: vec![line("one"), line("two")],
+            }],
+        }];
         // The same rule id twice (global + repo scope) must not collide either.
         let rules = parse_rules(&[
             json!({ "id": "any", "pattern": "." }),
             json!({ "id": "any", "pattern": "." }),
         ]);
-        apply_rules(&mut session, &rules);
-        let ids: Vec<&str> = session.findings[before..]
+        let found = findings_for(&files, &rules);
+        let ids: Vec<&str> = found
             .iter()
             .filter_map(|f| f.get("id").and_then(Value::as_str))
             .collect();
