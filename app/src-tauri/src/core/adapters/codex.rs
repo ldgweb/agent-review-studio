@@ -1,9 +1,15 @@
 // OpenAI Codex CLI adapter: parses rollout JSONL files from ~/.codex/sessions.
 // Defensive by design: Codex's format evolves, so every field access is
 // guarded and unrecognized records are skipped rather than failing the scan.
+//
+// Two shapes are read. Up to 0.15x: `event_msg` user/agent messages and
+// `function_call` records (apply_patch, shell). From 0.16x: `event_msg`
+// `item_completed` items (UserMessage, AgentMessage, FileChange with a
+// unified diff per file, CommandExecution with its exit code).
 
 use super::super::domain::*;
 use super::super::normalize::{duration_minutes, first_line, normalize, truncate, TEST_COMMAND};
+use super::project_root::relative_to;
 use super::{mtime_iso, mtime_ms, AdapterConfig, CollectResult, ParseCache, SessionAdapter};
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -180,6 +186,125 @@ fn record_patch(
     }
 }
 
+/// The text of a completed message item (`content[].text`, joined).
+fn item_text(item: &Value) -> String {
+    item.get("content")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|c| c.get("text").and_then(Value::as_str))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+/// The command a CommandExecution item ran: Codex's own parse of it
+/// (`parsed_cmd[].cmd`), else the last argument of the shell invocation
+/// (`pwsh.exe -Command <cmd>`, `bash -lc <cmd>`).
+fn item_command(item: &Value) -> String {
+    let parsed = item
+        .get("parsed_cmd")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|p| p.get("cmd").and_then(Value::as_str))
+                .filter(|s| !s.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(" && ")
+        })
+        .unwrap_or_default();
+    if !parsed.is_empty() {
+        return parsed;
+    }
+    match item.get("command") {
+        Some(Value::Array(args)) => args.last().map(scalar_string).unwrap_or_default(),
+        Some(Value::String(s)) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+/// The file changes of a FileChange item: `changes` maps each (absolute)
+/// path to `{type: add|update|delete, unified_diff, content, move_path}`.
+/// Paths become relative to the session's folder; `sections` receives each
+/// file's changed lines (the attribution input).
+fn file_changes(
+    item: &Value,
+    cwd: &str,
+    file_map: &mut Vec<RawFile>,
+    sections: &mut Vec<PatchSection>,
+) -> Vec<String> {
+    let root = cwd.replace('\\', "/");
+    let root = root.trim_end_matches('/');
+    let rel = |p: &str| relative_to(root, &p.replace('\\', "/"));
+    let mut touched = Vec::new();
+    let Some(changes) = item.get("changes").and_then(Value::as_object) else {
+        return touched;
+    };
+    for (key, change) in changes {
+        let kind = pstr(change, "type");
+        let moved_to = change
+            .get("move_path")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+        let mut added: Vec<String> = Vec::new();
+        let mut removed: Vec<String> = Vec::new();
+        match kind {
+            "add" => added.extend(pstr(change, "content").lines().map(str::to_string)),
+            "delete" => removed.extend(pstr(change, "content").lines().map(str::to_string)),
+            _ => {
+                for line in pstr(change, "unified_diff").split('\n') {
+                    if line.starts_with("@@")
+                        || line.starts_with("+++ ")
+                        || line.starts_with("--- ")
+                    {
+                        continue;
+                    }
+                    if let Some(rest) = line.strip_prefix('+') {
+                        added.push(rest.to_string());
+                    } else if let Some(rest) = line.strip_prefix('-') {
+                        removed.push(rest.to_string());
+                    }
+                }
+            }
+        }
+        let mut entry = |path: String, created: bool, deleted: bool| -> usize {
+            let idx = match file_map.iter().position(|f| f.path == path) {
+                Some(i) => i,
+                None => {
+                    file_map.push(RawFile::new(path, created));
+                    file_map.len() - 1
+                }
+            };
+            if created {
+                file_map[idx].created = true;
+            }
+            file_map[idx].deleted = deleted;
+            idx
+        };
+        let source = rel(key);
+        // A move leaves the old path deleted; the edits land on the new one.
+        let path = match moved_to {
+            Some(dest) => {
+                entry(source, false, true);
+                rel(dest)
+            }
+            None => source,
+        };
+        let idx = entry(path.clone(), kind == "add", kind == "delete");
+        let file = &mut file_map[idx];
+        file.added += added.len() as i64;
+        file.removed += removed.len() as i64;
+        file.added_lines.extend(added.iter().cloned());
+        sections.push((path.clone(), added, removed));
+        touched.push(path);
+    }
+    touched
+}
+
 pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Option<AgentSession> {
     let mut records: Vec<Value> = Vec::new();
     for line in raw.split('\n') {
@@ -254,6 +379,95 @@ pub fn parse_codex_rollout(raw: &str, fallback_id: &str, mtime_iso: &str) -> Opt
         }
         if rtype == "event_msg" {
             let kind = pstr(p, "type");
+            // Codex 0.16x: what happened in a turn arrives as completed items.
+            if kind == "item_completed" {
+                let item = p.get("item").unwrap_or(&Value::Null);
+                match pstr(item, "type") {
+                    "UserMessage" => {
+                        let text = item_text(item);
+                        if !text.starts_with('<') {
+                            if original_prompt.is_empty() && !text.is_empty() {
+                                original_prompt = truncate(&text, 1500);
+                            }
+                            if push_turn(&mut turns, &text, &ts) {
+                                rationale.clear();
+                            }
+                        }
+                    }
+                    "AgentMessage" => {
+                        let text = item_text(item);
+                        if !text.trim().is_empty() {
+                            last_agent_text = text.trim().to_string();
+                            rationale = truncate(text.trim(), 600);
+                        }
+                    }
+                    "FileChange" => {
+                        let mut sections = Vec::new();
+                        let touched = file_changes(item, &cwd, &mut file_map, &mut sections);
+                        let target = if touched.is_empty() {
+                            "(files)".to_string()
+                        } else {
+                            touched.join(", ")
+                        };
+                        push_event(
+                            &mut timeline,
+                            &mut event_seq,
+                            TimelineEventDraft::new(
+                                ts.clone(),
+                                TimelineEventKind::FileEdit,
+                                format!("Applied patch to {}", target),
+                            ),
+                        );
+                        record_patch(sections, &mut edits, &turns, &rationale, &ts, &timeline);
+                    }
+                    "CommandExecution" => {
+                        let command = item_command(item);
+                        if command.is_empty() {
+                            continue;
+                        }
+                        let is_test = TEST_COMMAND.is_match(&command);
+                        commands_run += 1;
+                        if is_test {
+                            tests_run += 1;
+                        }
+                        let exit = item.get("exit_code").and_then(Value::as_i64);
+                        let mut d = TimelineEventDraft::new(
+                            ts.clone(),
+                            if is_test {
+                                TimelineEventKind::TestRun
+                            } else {
+                                TimelineEventKind::Command
+                            },
+                            truncate(&first_line(&command), 80),
+                        );
+                        d.command = Some(truncate(&command, 300));
+                        d.exit_code = exit;
+                        push_event(&mut timeline, &mut event_seq, d);
+                        if let Some(code) = exit.filter(|c| *c != 0) {
+                            if is_test {
+                                tests_failed += 1;
+                            }
+                            let mut d = TimelineEventDraft::new(
+                                ts.clone(),
+                                TimelineEventKind::Error,
+                                format!("Command failed (exit {})", code),
+                            );
+                            d.detail = Some(truncate(pstr(item, "aggregated_output"), 500));
+                            d.exit_code = Some(code);
+                            push_event(&mut timeline, &mut event_seq, d);
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            if kind == "task_complete" {
+                let last = pstr(p, "last_agent_message").trim();
+                if !last.is_empty() {
+                    last_agent_text = last.to_string();
+                }
+                continue;
+            }
             let message = pstr(p, "message");
             if kind == "user_message" && !message.is_empty() && original_prompt.is_empty() {
                 original_prompt = truncate(message, 1500);
@@ -668,6 +882,23 @@ mod tests {
         assert_eq!(session.files[1].change_type, ChangeType::Modified);
         // The patch without line numbers is still a recorded edit
         assert!(session.edits.iter().any(|e| e.path == "src/a.ts"));
+    }
+
+    #[test]
+    fn parses_item_events_fixture() {
+        // Codex 0.16x: completed items instead of function calls
+        let raw = read_fixture("codex/item-events.jsonl");
+        let session =
+            parse_codex_rollout(&raw, "items", "2026-11-02T12:00:00.000Z").expect("session");
+        let paths: Vec<&str> = session.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["src/cart.ts", "src/cart.test.ts"]);
+        assert_eq!(session.files[1].change_type, ChangeType::Created);
+        assert_eq!(session.turns.len(), 1, "harness text is not a turn");
+        assert_eq!(session.edits.len(), 3);
+        assert!(session.edits[0].rationale.contains("MAX_ITEMS"));
+        assert_eq!(session.stats.tests_run, 2);
+        assert_eq!(session.stats.tests_failed, 1);
+        assert_session(&session, "codex/expected/item-events.json");
     }
 
     #[test]

@@ -113,6 +113,13 @@ fn human_prompt(entry: &Value) -> Option<String> {
     if entry.get("type").and_then(Value::as_str) != Some("user") {
         return None;
     }
+    // A compaction summary or a meta record is written by Claude Code, not
+    // typed by the person.
+    for flag in ["isCompactSummary", "isMeta"] {
+        if entry.get(flag).map(is_truthy).unwrap_or(false) {
+            return None;
+        }
+    }
     let message = entry.get("message").filter(|m| is_truthy(m))?;
     if let Some(origin) = entry.get("origin") {
         if is_truthy(origin) && origin.get("kind").and_then(Value::as_str) != Some("human") {
@@ -236,14 +243,19 @@ impl ClaudeParser {
             return;
         };
         self.any_entry = true;
-        if entry.get("type").and_then(Value::as_str) == Some("summary") {
-            if let Some(summary) = entry
-                .get("summary")
-                .and_then(Value::as_str)
-                .filter(|s| !s.is_empty())
-            {
-                self.declared_goal = Some(summary.to_string());
-            }
+        // The session's title: `summary` records in older versions,
+        // `ai-title` (rewritten as the session goes on) in newer ones.
+        let title_key = match entry.get("type").and_then(Value::as_str) {
+            Some("summary") => Some("summary"),
+            Some("ai-title") => Some("aiTitle"),
+            _ => None,
+        };
+        if let Some(title) = title_key
+            .and_then(|k| entry.get(k))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+        {
+            self.declared_goal = Some(title.to_string());
         }
         if entry.get("isSidechain").map(is_truthy).unwrap_or(false) {
             return;
@@ -319,6 +331,32 @@ impl ClaudeParser {
                 for block in blocks {
                     self.assistant_block(block, &event_ts);
                 }
+            }
+        }
+
+        if entry_type == Some("attachment") {
+            let att = entry.get("attachment").unwrap_or(&Value::Null);
+            let human = att
+                .get("origin")
+                .and_then(|o| o.get("kind"))
+                .and_then(Value::as_str)
+                == Some("human");
+            let prompt = att
+                .get("prompt")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if att.get("type").and_then(Value::as_str) == Some("queued_command")
+                && human
+                && !prompt.is_empty()
+                && !prompt.starts_with('<')
+            {
+                self.turns.push(SessionTurn {
+                    index: self.turns.len() as u32,
+                    prompt: truncate(prompt, 500),
+                    timestamp: event_ts.clone(),
+                });
+                self.rationale.clear();
             }
         }
 
@@ -570,6 +608,36 @@ impl ClaudeParser {
         if let (Some(tr), Some(fp)) = (tr, tr_file_path) {
             let rel = rel_path(fp, self.cwd());
             self.file_result(tr, rel, result_of.as_deref(), event_ts);
+        }
+        // Claude Code 2.1.3xx records the files a Bash command changed, with
+        // hunks shaped like an edit's structuredPatch: they explain changes
+        // made by scripts, formatters and generators.
+        let shell_files = tr
+            .and_then(|tr| tr.get("bashEditDiff"))
+            .and_then(|d| d.get("files"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for file in &shell_files {
+            let Some(fp) = file
+                .get("filePath")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let rel = rel_path(fp, self.cwd());
+            let created = file.get("created").map(is_truthy).unwrap_or(false);
+            let shaped = serde_json::json!({
+                "type": if created { "create" } else { "update" },
+                "structuredPatch": file.get("hunks").cloned().unwrap_or(Value::Array(Vec::new())),
+            });
+            self.file_result(&shaped, rel.clone(), result_of.as_deref(), event_ts);
+            if file.get("deleted").map(is_truthy).unwrap_or(false) {
+                if let Some(f) = self.file_map.iter_mut().find(|f| f.path == rel) {
+                    f.deleted = true;
+                }
+            }
         }
     }
 
@@ -959,6 +1027,7 @@ impl SessionAdapter for ClaudeCodeAdapter {
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::domain::ChangeType;
     use super::super::super::fixture::{assert_session, read as read_fixture};
     use super::{folder_matches, parse_claude_transcript, project_folder_key, read_tail};
 
@@ -968,6 +1037,40 @@ mod tests {
         let session = parse_claude_transcript(&raw, "2026-03-10T12:00:00.000Z").expect("session");
         assert_session(&session, "claude-code/expected/basic.json");
         assert!(!session.turns.is_empty(), "the original prompt is turn 0");
+    }
+
+    #[test]
+    fn reads_the_2_1_3xx_records() {
+        let raw = read_fixture("claude-code/v2-1-3xx.jsonl");
+        let session = parse_claude_transcript(&raw, "2026-11-03T12:00:00.000Z").expect("session");
+        // The last ai-title is the goal; the compaction summary and the meta
+        // record are not turns; the queued prompt is.
+        assert_eq!(session.declared_goal, "Rename addItem to addToCart");
+        let prompts: Vec<&str> = session.turns.iter().map(|t| t.prompt.as_str()).collect();
+        assert_eq!(
+            prompts,
+            [
+                "Rename addItem to addToCart everywhere",
+                "Also add a test for addToCart"
+            ]
+        );
+        // The Bash command's bashEditDiff explains the files it changed
+        let shell: Vec<&str> = session
+            .edits
+            .iter()
+            .filter(|e| e.rationale.contains("one sed command"))
+            .map(|e| e.path.as_str())
+            .collect();
+        assert_eq!(
+            shell,
+            ["src/cart.ts", "src/checkout.ts", "src/legacy-cart.ts"]
+        );
+        let legacy = session
+            .files
+            .iter()
+            .find(|f| f.path == "src/legacy-cart.ts");
+        assert_eq!(legacy.map(|f| f.change_type), Some(ChangeType::Deleted));
+        assert_session(&session, "claude-code/expected/v2-1-3xx.json");
     }
 
     #[test]

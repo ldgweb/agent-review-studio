@@ -2,9 +2,9 @@
 // (ask/edit/agent mode) from workspaceStorage/<hash>/chatSessions/.
 // File edits arrive as `textEditGroup` response parts (uri + inserted text
 // with real line numbers); tool calls as `toolInvocationSerialized` parts.
-// The transcript stores no "before" content, so only insertions are counted.
-// The project review takes the real diff from Git; these sessions add
-// file-level context. Defensive by design: undocumented internal format,
+// Line-level edits come from the tool calls the model made
+// (result.metadata.toolCallRounds): apply_patch envelopes, replace_string /
+// multi_replace_string old and new text, create_file content. Defensive by design: undocumented internal format,
 // guarded field access, malformed files skipped.
 
 use once_cell::sync::Lazy;
@@ -14,7 +14,8 @@ use std::collections::HashSet;
 use std::sync::{Mutex, MutexGuard};
 
 use super::super::domain::{
-    AgentSession, RawFile, RawSession, TimelineEvent, TimelineEventDraft, TimelineEventKind,
+    cap_edits, AgentSession, RawFile, RawSession, RecordedEdit, SessionTurn, TimelineEvent,
+    TimelineEventDraft, TimelineEventKind,
 };
 use super::super::normalize::{first_line, normalize, truncate, TEST_COMMAND};
 use super::project_root::{ascend_to_project_root, common_root, git_branch_of, relative_to};
@@ -107,24 +108,106 @@ fn basename(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Chat session files are plain JSON or JSONL whose first line wraps the snapshot in {kind:0, v}.
+/// Chat session files are plain JSON (older VS Code), or a JSONL operation
+/// log (VS Code 1.10x and later): the first line `{kind:0, v}` holds the
+/// initial state, then `{kind:1, k, v}` sets the value at path `k`,
+/// `{kind:2, k, v, i?}` appends the items of `v` to the array at `k` (after
+/// cutting it to `i` items when `i` is given), `{kind:3, k}` deletes it.
+/// The log is replayed into the session it describes.
 fn unwrap_session(raw: &str) -> Option<Value> {
-    let parsed: Value = match serde_json::from_str(raw) {
-        Ok(v) => v,
-        Err(_) => {
-            let nl = raw.find('\n')?;
-            serde_json::from_str(&raw[..nl]).ok()?
+    if let Ok(parsed) = serde_json::from_str::<Value>(raw) {
+        if !parsed.is_object() {
+            return None;
         }
+        if parsed.get("kind").and_then(Value::as_i64) == Some(0) {
+            return parsed.get("v").filter(|v| v.is_object()).cloned();
+        }
+        return Some(parsed);
+    }
+    let mut lines = raw.split('\n').filter(|l| !l.trim().is_empty());
+    let first: Value = serde_json::from_str(lines.next()?).ok()?;
+    let mut state = match first.get("kind").and_then(Value::as_i64) {
+        Some(0) => first.get("v").filter(|v| v.is_object())?.clone(),
+        _ if first.is_object() => return Some(first),
+        _ => return None,
     };
-    if !parsed.is_object() {
-        return None;
-    }
-    if parsed.get("kind").and_then(Value::as_i64) == Some(0) {
-        if let Some(v) = parsed.get("v").filter(|v| v.is_object()) {
-            return Some(v.clone());
+    for line in lines {
+        let Ok(op) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let path = op
+            .get("k")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let value = op.get("v").cloned().unwrap_or(Value::Null);
+        match op.get("kind").and_then(Value::as_i64) {
+            Some(0) if value.is_object() => state = value,
+            Some(1) => {
+                if let Some(slot) = slot_at(&mut state, &path) {
+                    *slot = value;
+                }
+            }
+            Some(2) => {
+                if let Some(slot) = slot_at(&mut state, &path) {
+                    if !slot.is_array() {
+                        *slot = Value::Array(Vec::new());
+                    }
+                    if let Some(items) = slot.as_array_mut() {
+                        if let Some(cut) = op.get("i").and_then(Value::as_u64) {
+                            items.truncate(cut as usize);
+                        }
+                        match value {
+                            Value::Array(new) => items.extend(new),
+                            other => items.push(other),
+                        }
+                    }
+                }
+            }
+            Some(3) => {
+                if let Some((last, parent)) = path.split_last() {
+                    if let Some(slot) = slot_at(&mut state, parent) {
+                        match (slot, last) {
+                            (Value::Object(map), Value::String(key)) => {
+                                map.remove(key);
+                            }
+                            (Value::Array(items), Value::Number(n)) => {
+                                if let Some(i) = n.as_u64().filter(|i| (*i as usize) < items.len())
+                                {
+                                    items.remove(i as usize);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
-    Some(parsed)
+    Some(state)
+}
+
+/// The value at `path` (object keys and array indexes), creating missing
+/// object keys on the way. None when the path runs through a scalar or past
+/// the end of an array.
+fn slot_at<'a>(root: &'a mut Value, path: &[Value]) -> Option<&'a mut Value> {
+    let mut cur = root;
+    for step in path {
+        cur = match step {
+            Value::String(key) => {
+                if cur.is_null() {
+                    *cur = Value::Object(Default::default());
+                }
+                cur.as_object_mut()?
+                    .entry(key.clone())
+                    .or_insert(Value::Null)
+            }
+            Value::Number(n) => cur.as_array_mut()?.get_mut(n.as_u64()? as usize)?,
+            _ => return None,
+        };
+    }
+    Some(cur)
 }
 
 pub fn parse_copilot_session(
@@ -201,6 +284,9 @@ pub fn parse_copilot_session(
     let mut tests_run: i64 = 0;
     let mut files_analyzed: i64 = 0;
     let mut initial_plan: Vec<String> = Vec::new();
+    let mut tests_failed: i64 = 0;
+    let mut turns: Vec<SessionTurn> = Vec::new();
+    let mut edits: Vec<RecordedEdit> = Vec::new();
 
     for (qi, request) in requests.iter().enumerate() {
         let req_ms = n(request.get("timestamp"));
@@ -215,6 +301,13 @@ pub fn parse_copilot_session(
         let user_text = s(request.get("message").and_then(|m| m.get("text")))
             .trim()
             .to_string();
+        if !user_text.is_empty() {
+            turns.push(SessionTurn {
+                index: turns.len() as u32,
+                prompt: truncate(&user_text, 500),
+                timestamp: req_iso.clone(),
+            });
+        }
         if qi > 0 && !user_text.is_empty() {
             push_event(
                 &mut timeline,
@@ -355,7 +448,30 @@ pub fn parse_copilot_session(
                 if !command.is_empty() {
                     ev.command = Some(truncate(&command, 300));
                 }
+                let exit = specific
+                    .get("terminalCommandState")
+                    .and_then(|st| st.get("exitCode"))
+                    .and_then(Value::as_i64);
+                ev.exit_code = exit;
                 push_event(&mut timeline, &mut event_seq, ev);
+                if let Some(code) = exit.filter(|c| *c != 0) {
+                    if is_test {
+                        tests_failed += 1;
+                    }
+                    let mut err = TimelineEventDraft::new(
+                        req_iso.clone(),
+                        TimelineEventKind::Error,
+                        format!("Command failed (exit {})", code),
+                    );
+                    err.detail = Some(truncate(
+                        s(specific
+                            .get("terminalCommandOutput")
+                            .and_then(|o| o.get("text"))),
+                        500,
+                    ));
+                    err.exit_code = Some(code);
+                    push_event(&mut timeline, &mut event_seq, err);
+                }
             } else if tool_id == "copilot_readFile" {
                 files_analyzed += 1;
                 let event_title = if title.is_empty() {
@@ -434,6 +550,8 @@ pub fn parse_copilot_session(
         if utf16_len(trimmed) > 40 {
             last_agent_text = trimmed.to_string();
         }
+        let turn = turns.last().map(|t| t.index).unwrap_or(0);
+        record_tool_edits(request, &root, turn, &req_iso, &timeline, &mut edits);
     }
 
     if files.is_empty() {
@@ -464,7 +582,7 @@ pub fn parse_copilot_session(
     .filter(|b| !b.is_empty())
     .unwrap_or_else(|| "(no git)".to_string());
 
-    normalize(RawSession {
+    let mut session = normalize(RawSession {
         session_id,
         timestamp: base_iso,
         agent: "copilot".to_string(),
@@ -494,14 +612,140 @@ pub fn parse_copilot_session(
         files_analyzed,
         commands_run,
         tests_run,
-        tests_failed: 0,
+        tests_failed,
         // Without a creationDate the span is unknown (not "since 1970").
         duration_minutes: if created_ms != 0.0 {
             (((last_ms - created_ms) / 60000.0).round() as i64).max(1)
         } else {
             1
         },
-    })
+    })?;
+    session.turns = turns;
+    cap_edits(&mut edits);
+    session.edits = edits;
+    Some(session)
+}
+
+static PATCH_FILE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\*\*\* (Add|Update|Delete) File: (.+)$").unwrap());
+
+/// The recorded edits of one request, from the tool calls of its rounds:
+/// each round's text before the calls is the rationale. A call whose
+/// arguments do not parse is skipped.
+fn record_tool_edits(
+    request: &Value,
+    root: &str,
+    turn: u32,
+    ts: &str,
+    timeline: &[TimelineEvent],
+    edits: &mut Vec<RecordedEdit>,
+) {
+    let empty: Vec<Value> = Vec::new();
+    let rounds = request
+        .get("result")
+        .and_then(|r| r.get("metadata"))
+        .and_then(|m| m.get("toolCallRounds"))
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    for round in rounds {
+        let rationale = {
+            let said = s(round.get("response")).trim();
+            if said.is_empty() {
+                s(round.get("thinking").and_then(|t| t.get("text"))).trim()
+            } else {
+                said
+            }
+        };
+        let rationale = truncate(rationale, 600);
+        for call in round
+            .get("toolCalls")
+            .and_then(Value::as_array)
+            .unwrap_or(&empty)
+        {
+            let Ok(args) = serde_json::from_str::<Value>(s(call.get("arguments"))) else {
+                continue;
+            };
+            // (absolute path, added lines, removed lines)
+            let mut changes: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+            match s(call.get("name")) {
+                "apply_patch" => {
+                    for line in s(args.get("input")).split('\n') {
+                        let line = line.strip_suffix('\r').unwrap_or(line);
+                        if let Some(m) = PATCH_FILE_RE.captures(line) {
+                            changes.push((m[2].trim().to_string(), Vec::new(), Vec::new()));
+                        } else if line.starts_with("***") || line.starts_with("@@") {
+                            continue;
+                        } else if let Some(last) = changes.last_mut() {
+                            if let Some(rest) = line.strip_prefix('+') {
+                                last.1.push(rest.to_string());
+                            } else if let Some(rest) = line.strip_prefix('-') {
+                                last.2.push(rest.to_string());
+                            }
+                        }
+                    }
+                }
+                "replace_string_in_file" => changes.push(replacement(&args)),
+                "multi_replace_string_in_file" => {
+                    for one in args
+                        .get("replacements")
+                        .and_then(Value::as_array)
+                        .unwrap_or(&empty)
+                    {
+                        changes.push(replacement(one));
+                    }
+                }
+                "create_file" => changes.push((
+                    s(args.get("filePath")).to_string(),
+                    s(args.get("content")).lines().map(str::to_string).collect(),
+                    Vec::new(),
+                )),
+                _ => {}
+            }
+            for (abs, added, removed) in changes {
+                if abs.is_empty() {
+                    continue;
+                }
+                let path = relative_to(root, &abs.replace('\\', "/"));
+                let event_id = timeline
+                    .iter()
+                    .rev()
+                    .find(|e| e.file_path.as_deref() == Some(path.as_str()))
+                    .map(|e| e.id.clone());
+                let mut edit = RecordedEdit {
+                    seq: 0,
+                    path,
+                    added: Vec::new(),
+                    removed: Vec::new(),
+                    turn,
+                    rationale: rationale.clone(),
+                    timestamp: ts.to_string(),
+                    event_id,
+                };
+                added.iter().for_each(|l| edit.push_added(l));
+                removed.iter().for_each(|l| edit.push_removed(l));
+                if edit.line_count() > 0 {
+                    edit.seq = edits.len() as u32 + 1;
+                    edits.push(edit);
+                }
+            }
+        }
+    }
+}
+
+/// One old/new string replacement: (path, new lines, old lines).
+fn replacement(args: &Value) -> (String, Vec<String>, Vec<String>) {
+    let lines = |key: &str| -> Vec<String> {
+        s(args.get(key))
+            .replace('\r', "")
+            .lines()
+            .map(str::to_string)
+            .collect()
+    };
+    (
+        s(args.get("filePath")).to_string(),
+        lines("newString"),
+        lines("oldString"),
+    )
 }
 
 pub struct CopilotAdapter {
@@ -643,5 +887,28 @@ mod tests {
         let session = parse_copilot_session(&raw, "basic", "2026-03-10T12:00:00.000Z")
             .expect("parser returned a session");
         assert_session(&session, "copilot/expected/basic.json");
+    }
+
+    #[test]
+    fn replays_the_operation_log_of_vscode_1145() {
+        let raw = read_fixture("copilot/oplog-v1145.jsonl");
+        let session = parse_copilot_session(&raw, "oplog", "2026-11-06T12:00:00.000Z")
+            .expect("parser returned a session");
+        assert_eq!(session.turns.len(), 2);
+        assert_eq!(session.files.len(), 1);
+        // apply_patch and multi_replace give line-level edits with the
+        // round's text as the reason
+        assert_eq!(session.edits.len(), 2);
+        assert!(session.edits[0].rationale.contains("no upper bound"));
+        assert_eq!(session.edits[1].turn, 1);
+        assert_eq!(session.stats.tests_run, 2);
+        assert_eq!(session.stats.tests_failed, 1);
+        // `i` cut the streamed markdown before the full text was pushed
+        assert!(
+            !session.outcome.contains("bound; The"),
+            "{}",
+            session.outcome
+        );
+        assert_session(&session, "copilot/expected/oplog-v1145.json");
     }
 }

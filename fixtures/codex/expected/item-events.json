@@ -1,0 +1,164 @@
+{
+  "sessionHash": "a944d2623a738becedef25758755eb462e5b3a144aa2b41c64d17595c236d8f6",
+  "session": {
+    "sessionId": "codex-item-0001",
+    "timestamp": "2026-11-02T09:00:00.000Z",
+    "agent": "codex",
+    "agentLabel": "OpenAI Codex",
+    "model": "gpt-5.5",
+    "projectName": "acme-shop",
+    "projectPath": "C:\\fixtures\\acme-shop",
+    "branch": "main",
+    "originalPrompt": "Cap the cart at MAX_ITEMS and add a test",
+    "declaredGoal": "Cap the cart at MAX_ITEMS and add a test",
+    "initialPlan": [],
+    "outcome": "Capped the cart at MAX_ITEMS in src/cart.ts and added src/cart.test.ts; npm test passes.",
+    "stats": {
+      "filesAnalyzed": 0,
+      "filesModified": 2,
+      "linesAdded": 6,
+      "linesRemoved": 2,
+      "commandsRun": 2,
+      "testsRun": 2,
+      "testsFailed": 1,
+      "durationMinutes": 1
+    },
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "src/cart.ts",
+        "changeType": "modified",
+        "linesAdded": 2,
+        "linesRemoved": 2,
+        "riskFlags": []
+      },
+      {
+        "id": "lf-2",
+        "path": "src/cart.test.ts",
+        "changeType": "created",
+        "linesAdded": 4,
+        "linesRemoved": 0,
+        "riskFlags": []
+      }
+    ],
+    "timeline": [
+      {
+        "id": "ev-1",
+        "timestamp": "2026-11-02T09:00:06.000Z",
+        "kind": "file-edit",
+        "title": "Applied patch to src/cart.ts, src/cart.test.ts"
+      },
+      {
+        "id": "ev-2",
+        "timestamp": "2026-11-02T09:00:08.000Z",
+        "kind": "test-run",
+        "title": "npm test",
+        "command": "npm test",
+        "exitCode": 1
+      },
+      {
+        "id": "ev-3",
+        "timestamp": "2026-11-02T09:00:08.000Z",
+        "kind": "error",
+        "title": "Command failed (exit 1)",
+        "detail": "FAIL src/cart.test.ts\n  expected 100, received 104",
+        "exitCode": 1
+      },
+      {
+        "id": "ev-4",
+        "timestamp": "2026-11-02T09:00:10.000Z",
+        "kind": "file-edit",
+        "title": "Applied patch to src/cart.ts"
+      },
+      {
+        "id": "ev-5",
+        "timestamp": "2026-11-02T09:00:12.000Z",
+        "kind": "test-run",
+        "title": "npm test",
+        "command": "npm test",
+        "exitCode": 0
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 4,
+        "level": "low",
+        "rationale": "2 files changed, +6 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "turns": [
+      {
+        "index": 0,
+        "prompt": "Cap the cart at MAX_ITEMS and add a test",
+        "timestamp": "2026-11-02T09:00:03.000Z"
+      }
+    ],
+    "edits": [
+      {
+        "seq": 1,
+        "path": "src/cart.ts",
+        "added": [
+          "  cart.qty = Math.min(cart.qty + qty, MAX_ITEMS);",
+          "  console.log(cart.qty);"
+        ],
+        "removed": [
+          "  cart.qty += qty;"
+        ],
+        "turn": 0,
+        "rationale": "The cart has no upper bound; I'll clamp the quantity to MAX_ITEMS.",
+        "timestamp": "2026-11-02T09:00:06.000Z",
+        "eventId": "ev-1"
+      },
+      {
+        "seq": 2,
+        "path": "src/cart.test.ts",
+        "added": [
+          "import { addItem } from './cart';",
+          "test('caps at MAX_ITEMS', () => {",
+          "  expect(addItem({ qty: 99 }, 5).qty).toBe(100);",
+          "});"
+        ],
+        "removed": [],
+        "turn": 0,
+        "rationale": "The cart has no upper bound; I'll clamp the quantity to MAX_ITEMS.",
+        "timestamp": "2026-11-02T09:00:06.000Z",
+        "eventId": "ev-1"
+      },
+      {
+        "seq": 3,
+        "path": "src/cart.ts",
+        "added": [],
+        "removed": [
+          "  console.log(cart.qty);"
+        ],
+        "turn": 0,
+        "rationale": "The cart has no upper bound; I'll clamp the quantity to MAX_ITEMS.",
+        "timestamp": "2026-11-02T09:00:10.000Z",
+        "eventId": "ev-4"
+      }
+    ]
+  }
+}

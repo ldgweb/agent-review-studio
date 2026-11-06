@@ -1,0 +1,155 @@
+{
+  "sessionHash": "26794f3c150d8a2f2db29e10e6c59583a7ec7080525c1d123d3a4f681a4f022c",
+  "session": {
+    "sessionId": "copilot-oplog-0001",
+    "timestamp": "2026-11-06T09:00:00.000Z",
+    "agent": "copilot",
+    "agentLabel": "GitHub Copilot",
+    "model": "copilot/auto",
+    "projectName": "src",
+    "projectPath": "c:/fixtures/acme-shop/src",
+    "branch": "(no git)",
+    "originalPrompt": "Cap the cart at MAX_ITEMS",
+    "declaredGoal": "Cap the cart at MAX_ITEMS",
+    "initialPlan": [],
+    "outcome": "The quantity has no upper bound; I'll clamp it to MAX_ITEMS.Capped the quantity at MAX_ITEMS in src/cart.ts; the tests pass now.",
+    "stats": {
+      "filesAnalyzed": 0,
+      "filesModified": 1,
+      "linesAdded": 4,
+      "linesRemoved": 2,
+      "commandsRun": 2,
+      "testsRun": 2,
+      "testsFailed": 1,
+      "durationMinutes": 1
+    },
+    "files": [
+      {
+        "id": "lf-1",
+        "path": "cart.ts",
+        "changeType": "modified",
+        "linesAdded": 4,
+        "linesRemoved": 2,
+        "riskFlags": []
+      }
+    ],
+    "timeline": [
+      {
+        "id": "ev-1",
+        "timestamp": "2026-11-06T09:00:10.000Z",
+        "kind": "file-edit",
+        "title": "Edited cart.ts",
+        "filePath": "cart.ts"
+      },
+      {
+        "id": "ev-2",
+        "timestamp": "2026-11-06T09:00:10.000Z",
+        "kind": "test-run",
+        "title": "npm test",
+        "command": "npm test",
+        "exitCode": 1
+      },
+      {
+        "id": "ev-3",
+        "timestamp": "2026-11-06T09:00:10.000Z",
+        "kind": "error",
+        "title": "Command failed (exit 1)",
+        "detail": "FAIL src/cart.test.ts",
+        "exitCode": 1
+      },
+      {
+        "id": "ev-4",
+        "timestamp": "2026-11-06T09:00:10.000Z",
+        "kind": "test-run",
+        "title": "npm test",
+        "command": "npm test",
+        "exitCode": 0
+      },
+      {
+        "id": "ev-5",
+        "timestamp": "2026-11-06T09:01:40.000Z",
+        "kind": "note",
+        "title": "User: Also guard removeItem"
+      },
+      {
+        "id": "ev-6",
+        "timestamp": "2026-11-06T09:01:40.000Z",
+        "kind": "file-edit",
+        "title": "Edited cart.ts",
+        "filePath": "cart.ts"
+      }
+    ],
+    "risks": [
+      {
+        "dimension": "security",
+        "score": 8,
+        "level": "low",
+        "rationale": "No auth, credential or permission surface touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "database",
+        "score": 5,
+        "level": "low",
+        "rationale": "No database-related files touched.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "performance",
+        "score": 5,
+        "level": "low",
+        "rationale": "No performance-critical files detected.",
+        "contributingFileIds": []
+      },
+      {
+        "dimension": "maintainability",
+        "score": 2,
+        "level": "low",
+        "rationale": "1 files changed, +4 lines added in one session.",
+        "contributingFileIds": []
+      }
+    ],
+    "turns": [
+      {
+        "index": 0,
+        "prompt": "Cap the cart at MAX_ITEMS",
+        "timestamp": "2026-11-06T09:00:10.000Z"
+      },
+      {
+        "index": 1,
+        "prompt": "Also guard removeItem",
+        "timestamp": "2026-11-06T09:01:40.000Z"
+      }
+    ],
+    "edits": [
+      {
+        "seq": 1,
+        "path": "cart.ts",
+        "added": [
+          "  cart.qty = Math.min(cart.qty + qty, MAX_ITEMS);"
+        ],
+        "removed": [
+          "  cart.qty += qty;"
+        ],
+        "turn": 0,
+        "rationale": "The quantity has no upper bound; I'll clamp it to MAX_ITEMS.",
+        "timestamp": "2026-11-06T09:00:10.000Z",
+        "eventId": "ev-1"
+      },
+      {
+        "seq": 2,
+        "path": "cart.ts",
+        "added": [
+          "  cart.qty = Math.max(cart.qty - qty, 0);"
+        ],
+        "removed": [
+          "  cart.qty -= qty;"
+        ],
+        "turn": 1,
+        "rationale": "I'll make removeItem stop at zero.",
+        "timestamp": "2026-11-06T09:01:40.000Z",
+        "eventId": "ev-6"
+      }
+    ]
+  }
+}

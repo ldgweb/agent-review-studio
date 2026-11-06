@@ -1,5 +1,5 @@
 {
-  "sessionHash": "91c9f865ef385a11ed499d3b9a1ca5a1616e679abbd8ccde545ebf018e51d949",
+  "sessionHash": "f438a598f2d629fd07700f7accad54182450cb80057fc8fc30e26af04049359e",
   "session": {
     "sessionId": "copilot-0001",
     "timestamp": "2026-07-13T11:30:00.000Z",
@@ -122,6 +122,18 @@
         "level": "low",
         "rationale": "3 files changed, +5 lines added in one session.",
         "contributingFileIds": []
+      }
+    ],
+    "turns": [
+      {
+        "index": 0,
+        "prompt": "Clean up the order-shipped email template and extract the shared header",
+        "timestamp": "2026-07-13T11:30:10.000Z"
+      },
+      {
+        "index": 1,
+        "prompt": "Also use the shared header in the order-confirmed email",
+        "timestamp": "2026-07-13T11:43:20.000Z"
       }
     ]
   }
