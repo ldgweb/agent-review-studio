@@ -42,7 +42,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 sha2 = "0.10"
 percent-encoding = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 dirs = "5"
 notify = "6"
 # "Since last review": line diffs between a round's snapshot and the working tree.

@@ -13,8 +13,6 @@ pub struct AdapterConfigFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_dirs: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub dirs: Option<Vec<String>>,
 }
 
@@ -95,22 +93,6 @@ pub fn defaults() -> AppConfig {
         AdapterConfigFile {
             enabled: true,
             dir: Some(path_str(default_copilot_dir())),
-            ..Default::default()
-        },
-    );
-    adapters.insert(
-        "aider".into(),
-        AdapterConfigFile {
-            enabled: true,
-            project_dirs: Some(Vec::new()),
-            ..Default::default()
-        },
-    );
-    adapters.insert(
-        "gemini-cli".into(),
-        AdapterConfigFile {
-            enabled: true,
-            dir: Some(path_str(home.join(".gemini").join("tmp"))),
             ..Default::default()
         },
     );
@@ -236,14 +218,6 @@ fn save_config_at(path: &Path, patch: &Value) -> Result<AppConfig, String> {
             }
             if let Some(dir) = raw.get("dir").and_then(Value::as_str) {
                 merged.dir = Some(dir.to_string());
-            }
-            if let Some(list) = raw.get("projectDirs").and_then(Value::as_array) {
-                merged.project_dirs = Some(
-                    list.iter()
-                        .filter_map(Value::as_str)
-                        .map(String::from)
-                        .collect(),
-                );
             }
             if let Some(list) = raw.get("dirs").and_then(Value::as_array) {
                 merged.dirs = Some(

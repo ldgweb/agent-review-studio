@@ -2,13 +2,11 @@
 // produces normalized AgentSessions. Product semantics (risk, findings,
 // warnings) live in the normalizer, not here.
 
-pub mod aider;
 pub mod claude_code;
 pub mod codex;
 pub mod copilot;
 pub mod cursor;
 pub mod custom;
-pub mod gemini;
 pub mod project_root;
 
 use super::domain::AgentSession;
@@ -37,7 +35,6 @@ pub struct CollectResult {
 pub struct AdapterConfig {
     pub enabled: bool,
     pub dir: Option<String>,
-    pub project_dirs: Vec<String>,
     pub dirs: Vec<String>,
 }
 
@@ -71,12 +68,6 @@ pub trait SessionAdapter {
     fn watch_targets(&self, config: &AdapterConfig) -> Vec<WatchTarget> {
         let mut out: Vec<WatchTarget> = Vec::new();
         if let Some(dir) = &config.dir {
-            out.push(WatchTarget {
-                path: dir.clone(),
-                recursive: true,
-            });
-        }
-        for dir in &config.project_dirs {
             out.push(WatchTarget {
                 path: dir.clone(),
                 recursive: true,

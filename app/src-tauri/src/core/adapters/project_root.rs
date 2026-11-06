@@ -1,5 +1,5 @@
 // Shared path heuristics for adapters whose sources carry absolute file
-// paths (Cursor, VS Code Copilot, Gemini CLI).
+// paths (Cursor, VS Code Copilot).
 
 use super::super::paths::{path_eq, strip_root};
 use std::path::Path;

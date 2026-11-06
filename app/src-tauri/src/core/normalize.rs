@@ -368,7 +368,7 @@ pub fn parse_date(text: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
         return Some(dt.with_timezone(&Utc));
     }
-    // Naive "YYYY-MM-DD HH:MM:SS" (aider's local timestamps), treated as UTC
+    // Naive "YYYY-MM-DD HH:MM:SS", treated as UTC
     if let Ok(naive) = NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S") {
         return Some(Utc.from_utc_datetime(&naive));
     }

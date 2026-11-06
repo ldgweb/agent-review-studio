@@ -29,7 +29,7 @@ Agents change how they store sessions without warning, and when that happens an 
 
 **Spotting it**
 
-- **Settings → Session sources** shows each source's session count and, when something is off, a hint. A count of zero for an agent you use, or sessions with no files or no timeline, usually means the format moved.
+- **Settings → Session sources** shows each source's session count and, when something is off, a hint. A count of zero for an agent you use, or sessions with no requests or no files, usually means the format moved.
 - Users report it with the **Transcript format changed** issue template: agent name and version, what is missing, and a *minimal, anonymised* excerpt. Never paste a real transcript: it can contain private code and credentials.
 
 **Fixing it**
