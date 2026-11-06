@@ -4,7 +4,7 @@
 // them. The project review itself is in types/review.ts.
 // ---------------------------------------------------------------------------
 
-export type AgentName = 'claude-code' | 'codex' | 'cursor' | 'copilot' | 'aider' | 'gemini-cli' | 'custom';
+export type AgentName = 'claude-code' | 'codex' | 'cursor' | 'copilot' | 'custom';
 
 export type RiskDimension = 'security' | 'database' | 'performance' | 'maintainability';
 

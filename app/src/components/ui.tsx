@@ -19,8 +19,6 @@ const agentColors: Record<AgentName, string> = {
   codex: '#7ec8a5',
   cursor: '#9a8cf0',
   copilot: '#58a6ff',
-  aider: '#5b8def',
-  'gemini-cli': '#d9a63c',
   custom: '#9aa5b8',
 };
 

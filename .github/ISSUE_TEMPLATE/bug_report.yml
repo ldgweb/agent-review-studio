@@ -23,7 +23,7 @@ body:
     id: version
     attributes:
       label: Version
-      placeholder: "0.10.0, or commit hash if built from source"
+      placeholder: "0.11.0, or commit hash if built from source"
     validations:
       required: true
   - type: dropdown
@@ -35,8 +35,6 @@ body:
         - Codex
         - Cursor
         - VS Code Copilot
-        - Aider
-        - Gemini CLI
         - ars/v1 JSON
         - Not related to a specific agent
   - type: input

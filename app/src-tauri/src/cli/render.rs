@@ -1,13 +1,8 @@
-// CLI renderers. `ars list` reads the typed session index. `ars review` and
-// `ars pr` read a project review as JSON: the core's own output, or a file
-// saved with `ars review --json`, so a CI job without the transcripts
-// renders exactly what the desktop showed.
-//
-// Text that comes from transcripts or the reviewer is redacted (best effort)
-// and @mention-defused before it lands in a pull request.
+// CLI renderers. `ars list` reads the typed session index. `ars review`
+// reads the project review as JSON, the core's own output, so it shows
+// exactly what the desktop shows.
 
 use crate::app_core::domain::{AgentSession, RiskLevel, RiskScore};
-use crate::app_core::redact;
 use chrono::{DateTime, Datelike, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -15,9 +10,9 @@ use std::collections::HashMap;
 pub fn render_list(sessions: &[AgentSession]) -> String {
     if sessions.is_empty() {
         return "\n  No agent sessions found on this machine.\n\
-                \n  Agent Review Studio reads Claude Code, Codex, Cursor, VS Code Copilot,\
-                \n  Gemini CLI, Aider and ars/v1 sessions. Settings → Session sources in\
-                \n  the app shows where it looks.\n\n"
+                \n  Agent Review Studio reads Claude Code, Codex, Cursor, VS Code Copilot\
+                \n  and ars/v1 sessions. Settings → Session sources in the app shows\
+                \n  where it looks.\n\n"
             .to_string();
     }
     let mut out = String::new();
@@ -387,7 +382,7 @@ pub fn render_review(review: &Value) -> String {
             ));
         }
     }
-    out.push_str("\n  Open it in the app: ars . · PR summary: ars pr\n\n");
+    out.push_str("\n  Open it in the app: ars . · For the agent: ars feedback\n\n");
     out
 }
 
@@ -395,182 +390,6 @@ fn dedup(mut v: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     v.retain(|x| seen.insert(x.clone()));
     v
-}
-
-/// Markdown-safe single line: collapse whitespace, escape table pipes,
-/// defuse @mentions, redact secrets.
-fn inline(text: &str, max: usize) -> String {
-    let flat: String = no_mentions(&redact::redact_secrets(
-        &text
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .replace('|', "\\|"),
-    ));
-    if flat.chars().count() <= max {
-        flat
-    } else {
-        let t: String = flat.chars().take(max.saturating_sub(1)).collect();
-        format!("{t}…")
-    }
-}
-
-/// Break `@user` / `@org/team` mentions with a zero-width joiner so posting
-/// transcript text never pings anyone. E-mail addresses (`a@b.c`: `@` after
-/// a word character) are not mentions and stay as they are.
-fn no_mentions(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut prev: Option<char> = None;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        out.push(c);
-        if c == '@'
-            && !prev.is_some_and(|p| p.is_alphanumeric() || p == '_')
-            && chars.peek().is_some_and(|n| n.is_ascii_alphanumeric())
-        {
-            out.push('\u{200D}');
-        }
-        prev = Some(c);
-    }
-    out
-}
-
-/// The pull-request summary: what the agents were asked and reported, the
-/// changes with the reviewer's verdicts, findings and open comments.
-pub fn render_pr_markdown(review: &Value) -> String {
-    let mut m: Vec<String> = Vec::new();
-    let project = &review["project"];
-    let files = arr(review, "files");
-    m.push(format!(
-        "### Agent Review Studio · {}",
-        inline(s(project, "name"), 80)
-    ));
-    let c = counts(review);
-    if files.is_empty() {
-        m.push("No uncommitted changes at the time of this summary.".into());
-    } else {
-        m.push(format!(
-            "**Review:** {} ({}, of {} file{})",
-            outcome(&c, files.len()),
-            tally(&c),
-            files.len(),
-            plural(files.len())
-        ));
-    }
-    let rounds = arr(&review["state"], "rounds");
-    if let Some(last) = rounds.last() {
-        let day = s(last, "at").get(..10).unwrap_or("");
-        m.push(match rounds.len() {
-            1 => format!("_1 review round, on {day}._"),
-            k => format!("_{k} review rounds, the last on {day}._"),
-        });
-    }
-
-    let sessions = arr(review, "sessions");
-    if !sessions.is_empty() {
-        m.push(String::new());
-        m.push("#### What the agents were asked".into());
-        for x in sessions.iter().take(5) {
-            m.push(format!(
-                "- **{}** · {}: “{}”{}",
-                inline(s(x, "agentLabel"), 40),
-                inline(s(x, "model"), 40),
-                inline(s(x, "originalPrompt"), 220),
-                match n(x, "attributedHunks") {
-                    0 => String::new(),
-                    k => format!(" ({k} change{})", plural(k as usize)),
-                }
-            ));
-            let report = s(x, "outcome");
-            if !report.is_empty() && !report.starts_with("No final self-report") {
-                m.push(format!("  > {}", inline(report, 400)));
-            }
-        }
-    }
-
-    if !files.is_empty() {
-        let findings = findings_by_path(review);
-        m.push(String::new());
-        m.push("#### Files".into());
-        m.push("| File | Change | Review | Signals |".into());
-        m.push("|---|---|---|---|".into());
-        for f in files.iter().take(60) {
-            let path = s(f, "path");
-            let mut signals: Vec<String> = arr(f, "riskFlags")
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect();
-            if let Some(list) = findings.get(path) {
-                signals.push(format!("{} finding{}", list.len(), plural(list.len())));
-            }
-            if s(f, "verification") == "unverified" {
-                signals.push("not re-tested".into());
-            }
-            let unrecorded = unrecorded_hunks(f);
-            if unrecorded > 0 && !sessions.is_empty() {
-                signals.push(format!(
-                    "{unrecorded} change{} not from a recorded edit",
-                    plural(unrecorded)
-                ));
-            }
-            let verdict = file_verdict(review, f);
-            m.push(format!(
-                "| `{}` | +{} −{} | {} {} | {} |",
-                inline(path, 90).replace('`', "'"),
-                n(f, "linesAdded"),
-                n(f, "linesRemoved"),
-                verdict_icon(verdict.as_deref()),
-                verdict_label(verdict.as_deref()),
-                signals.join(" · ")
-            ));
-        }
-        if files.len() > 60 {
-            m.push(format!("| … {} more | | | |", files.len() - 60));
-        }
-
-        let mut all: Vec<&Value> = findings.values().flatten().copied().collect();
-        all.sort_by_key(|f| -severity_rank(s(f, "severity")));
-        if !all.is_empty() {
-            m.push(String::new());
-            m.push("#### Findings".into());
-            for f in all.iter().take(12) {
-                let loc = match f.get("line").and_then(Value::as_i64) {
-                    Some(l) => format!("{}:{l}", s(f, "filePath")),
-                    None => s(f, "filePath").to_string(),
-                };
-                m.push(format!(
-                    "- {} **{}** at `{}`",
-                    match s(f, "severity") {
-                        "critical" => "🔴",
-                        "high" => "🟠",
-                        "medium" => "🟡",
-                        _ => "⚪",
-                    },
-                    inline(s(f, "title"), 100),
-                    inline(&loc, 100).replace('`', "'")
-                ));
-            }
-        }
-        let comments = current_comments(review);
-        if !comments.is_empty() {
-            m.push(String::new());
-            m.push("#### Review comments".into());
-            for c in comments.iter().take(20) {
-                m.push(format!(
-                    "- `{}`: {}",
-                    inline(&comment_loc(c), 100).replace('`', "'"),
-                    inline(&comment_text(c), 300)
-                ));
-            }
-        }
-    }
-    m.push(String::new());
-    m.push(
-        "<sub>Generated by Agent Review Studio. Signals are fixed heuristics, not a security assessment; verdicts apply to the exact code reviewed.</sub>"
-            .into(),
-    );
-    m.join("\n") + "\n"
 }
 
 fn max_risk(risks: &[RiskScore]) -> Option<&RiskScore> {
@@ -682,7 +501,7 @@ mod tests {
                 { "path": "c.ts", "fingerprint": "fp-c", "linesAdded": 1, "linesRemoved": 0, "riskFlags": [],
                   "hunks": [{ "id": "h-2", "origin": { "kind": "none" } }] }
             ],
-            "sessions": [{ "agentLabel": "Claude Code", "model": "m", "originalPrompt": "Ask @octocat about the token=abcdefgh12345", "attributedHunks": 1, "outcome": "Done." }],
+            "sessions": [{ "agentLabel": "Claude Code", "model": "m", "originalPrompt": "Add a cart total", "attributedHunks": 1, "outcome": "Done." }],
             "findings": [{ "title": "Possible hardcoded secret", "severity": "high", "filePath": "src/a.ts", "line": 2 }],
             "state": {
                 "hunks": { "h-1": { "verdict": "approved" }, "h-2": { "verdict": "rejected" } },
@@ -721,11 +540,9 @@ mod tests {
             { "id": "h-3", "origin": { "kind": "none" } }
         ]);
         r["state"]["hunks"]["h-3"] = json!({ "verdict": "approved" });
-        let md = render_pr_markdown(&r);
-        assert!(
-            md.contains("**Review:** In review (1 approved · 1 mixed · 1 pending, of 3 files)"),
-            "{md}"
-        );
+        let c = counts(&r);
+        assert_eq!(tally(&c), "1 approved · 1 mixed · 1 pending");
+        assert_eq!(outcome(&c, 3), "In review");
     }
 
     #[test]
@@ -743,18 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pr_summary_is_safe_to_post() {
-        let md = render_pr_markdown(&review());
-        assert!(md.contains("@\u{200D}octocat"), "{md}");
-        assert!(!md.contains("abcdefgh12345"), "secrets are redacted: {md}");
-        assert!(md.contains("why \\| here?"), "pipes are escaped: {md}");
-        assert!(!md.contains("outdated"), "{md}");
-        assert!(
-            md.contains(
-                "| `src/a.ts` | +2 −1 | ✅ approved | security · 1 finding · not re-tested |"
-            ),
-            "{md}"
-        );
+    fn files_with_signals_need_attention() {
         let text = render_review(&review());
         assert!(text.contains("NEEDS ATTENTION"), "{text}");
     }

@@ -202,7 +202,7 @@ pub fn findings_for(files: &[RuleFile], rules: &[Rule]) -> Vec<Value> {
                 break;
             }
             // Per-file ordinal for added-line hits without a line number
-            // (Codex/Gemini/Cursor v1 hunks), so their ids stay distinct.
+            // (Codex and Cursor v1 hunks), so their ids stay distinct.
             let mut unanchored = 0usize;
             if let Some(glob) = &rule.file_glob {
                 if !glob.is_match(&file.path) {

@@ -17,7 +17,6 @@ const SECTIONS: Array<{ key: SettingsSection; label: string; desc: string }> = [
 interface AdapterConfig {
   enabled: boolean;
   dir?: string;
-  projectDirs?: string[];
   dirs?: string[];
 }
 
@@ -218,13 +217,11 @@ function RuleCard({
   );
 }
 
-const ADAPTER_META: Record<string, { label: string; desc: string; dirLabel?: string; listKey?: 'projectDirs' | 'dirs'; listLabel?: string }> = {
+const ADAPTER_META: Record<string, { label: string; desc: string; dirLabel?: string; listKey?: 'dirs'; listLabel?: string }> = {
   'claude-code': { label: 'Claude Code', desc: 'JSONL transcripts, zero-config', dirLabel: 'Transcripts folder' },
   codex: { label: 'OpenAI Codex', desc: 'CLI rollouts, zero-config', dirLabel: 'Sessions folder' },
   cursor: { label: 'Cursor', desc: 'Composer/Agent chats from Cursor’s local database, zero-config', dirLabel: 'globalStorage folder' },
   copilot: { label: 'VS Code Copilot', desc: 'Copilot Chat sessions from workspaceStorage, zero-config', dirLabel: 'workspaceStorage folder' },
-  aider: { label: 'Aider', desc: 'Chat history inside each project', listKey: 'projectDirs', listLabel: 'Project folders, one per line' },
-  'gemini-cli': { label: 'Gemini CLI', desc: 'Saved chats and checkpoints (/chat save, --checkpointing)', dirLabel: 'Gemini tmp folder' },
   custom: { label: 'Custom agents', desc: 'Open ars/v1 JSON format, for any agent or CI', listKey: 'dirs', listLabel: 'Watched folders, one per line' },
 };
 

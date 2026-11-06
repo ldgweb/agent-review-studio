@@ -16,8 +16,6 @@ body:
         - Codex
         - Cursor
         - VS Code Copilot
-        - Aider
-        - Gemini CLI
         - ars/v1 JSON
     validations:
       required: true
@@ -45,4 +43,4 @@ body:
     id: app-version
     attributes:
       label: Agent Review Studio version
-      placeholder: "0.10.0, or commit hash if built from source"
+      placeholder: "0.11.0, or commit hash if built from source"

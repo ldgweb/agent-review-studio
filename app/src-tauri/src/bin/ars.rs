@@ -1,12 +1,12 @@
 // ars: the native CLI, on the same core the desktop app runs.
 //
-// `ars .` opens the project's review in the desktop app. `ars review` and
-// `ars pr` build the same project review the desktop shows (the core's
+// `ars .` opens the project's review in the desktop app. `ars review`
+// builds the same project review the desktop shows (the core's
 // review::build), so the CLI can never diverge from the app. `ars feedback`
 // is for the agent: it prints the review the desktop would copy.
 
-use agent_review_studio::app_core::{api, domain::AgentSession, git, paths, review};
-use agent_review_studio::cli::{github, render};
+use agent_review_studio::app_core::{api, domain::AgentSession, paths, review};
+use agent_review_studio::cli::render;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -23,7 +23,6 @@ COMMANDS
   list, ls             List recent agent sessions (default)
   review, r [target]   Terminal summary of the project's uncommitted changes:
                        who wrote what, your verdicts, findings, comments
-  pr [target]          The same as Markdown for the pull request
   feedback [dir]       For your agent: print the review of this project as
                        instructions and start the next round (what Copy
                        review does in the app). Ask the agent to run it.
@@ -34,17 +33,10 @@ TARGET
   project.
 
 FLAGS
-  --json               review/pr: print the whole review as JSON, to read
-                       back with --from. NOT redacted: it holds diffs and
-                       transcript excerpts (prompts, any secrets in them).
-                       Do not post or share it.
-  --from <file>        review/pr: read the review from a file saved with
-                       --json
+  --json               review: print the whole review as JSON. It holds
+                       diffs and transcript excerpts (prompts, any secrets
+                       in them): do not post or share it.
   --project <path>     list: only sessions under this project path
-  --post               pr: create/update the review comment on the PR
-  --dry-run            pr: resolve the target and preview, post nothing
-  --pr <n>             pr: pull request number (else resolved by branch)
-  --repo <owner/name>  pr: repository (else GITHUB_REPOSITORY / git remote)
   -h, --help           This help
   -V, --version        Version
 ";
@@ -52,12 +44,7 @@ FLAGS
 struct Args {
     cmd: String,
     target: Option<String>,
-    post: bool,
-    dry_run: bool,
     json: bool,
-    pr: Option<u64>,
-    repo: Option<String>,
-    from: Option<String>,
     project: Option<String>,
 }
 
@@ -76,12 +63,7 @@ fn parse(argv: &[String]) -> Args {
     let mut a = Args {
         cmd: "list".to_string(),
         target: None,
-        post: false,
-        dry_run: false,
         json: false,
-        pr: None,
-        repo: None,
-        from: None,
         project: None,
     };
     let mut pos: Vec<String> = Vec::new();
@@ -97,21 +79,7 @@ fn parse(argv: &[String]) -> Args {
                 println!("ars {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
-            "--post" => a.post = true,
-            "--dry-run" => a.dry_run = true,
             "--json" => a.json = true,
-            "--pr" => {
-                let raw = flag_value(argv, &mut i, "--pr");
-                match raw.parse::<u64>() {
-                    Ok(n) if n > 0 => a.pr = Some(n),
-                    _ => {
-                        eprintln!("ars: --pr expects a pull request number, got \"{raw}\"");
-                        std::process::exit(2);
-                    }
-                }
-            }
-            "--repo" => a.repo = Some(flag_value(argv, &mut i, "--repo")),
-            "--from" => a.from = Some(flag_value(argv, &mut i, "--from")),
             "--project" => a.project = Some(flag_value(argv, &mut i, "--project")),
             s if !s.starts_with('-') => pos.push(t.clone()),
             other => {
@@ -169,20 +137,6 @@ async fn main() {
 
         "feedback" => feedback(args.target.as_deref().unwrap_or(".")).await,
 
-        "pr" => {
-            let review = load_review(&args).await;
-            if args.json {
-                print_json(&review);
-                return;
-            }
-            let body = render::render_pr_markdown(&review);
-            if args.post || args.dry_run {
-                post_flow(&review, &body, &args).await;
-            } else {
-                print!("{body}");
-            }
-        }
-
         other => {
             eprintln!("ars: unknown command \"{other}\". Run `ars --help`.");
             std::process::exit(2);
@@ -191,7 +145,7 @@ async fn main() {
 }
 
 fn is_command(cmd: &str) -> bool {
-    matches!(cmd, "list" | "ls" | "review" | "r" | "pr" | "feedback")
+    matches!(cmd, "list" | "ls" | "review" | "r" | "feedback")
 }
 
 /// The review for the agent on stdout, the way the agent reads it; notes
@@ -269,20 +223,9 @@ async fn list_sessions(args: &Args) -> Vec<AgentSession> {
         .collect()
 }
 
-/// The project review for review/pr: read from a file saved with --json,
-/// or built for the target (a folder, or the project of a session from
-/// `ars list`).
+/// The project review for `ars review`, built for the target (a folder,
+/// or the project of a session from `ars list`).
 async fn load_review(args: &Args) -> Value {
-    if let Some(path) = &args.from {
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| {
-            eprintln!("ars: could not read {path}: {e}");
-            std::process::exit(1);
-        });
-        return parse_capsule(&text).unwrap_or_else(|e| {
-            eprintln!("ars: {path} is not a review saved with `ars review --json`: {e}");
-            std::process::exit(1);
-        });
-    }
     let dir = match args.target.as_deref() {
         None => ".".to_string(),
         Some(t) if Path::new(t).is_dir() => t.to_string(),
@@ -315,15 +258,6 @@ async fn load_review(args: &Args) -> Value {
             std::process::exit(1);
         }
     }
-}
-
-/// A saved review: the JSON that `ars review --json` printed.
-fn parse_capsule(text: &str) -> Result<Value, String> {
-    let value: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    if !value["project"].is_object() || !value["files"].is_array() {
-        return Err("it has no project and files".into());
-    }
-    Ok(value)
 }
 
 fn print_json(review: &Value) {
@@ -444,85 +378,4 @@ fn fail(target: Option<&str>) -> ! {
         None => eprintln!("ars: no agent sessions found on this machine."),
     }
     std::process::exit(1);
-}
-
-async fn post_flow(review: &Value, body: &str, args: &Args) {
-    let token = github::gh_token();
-    // Remote and branch from the work tree when it is here. A saved review
-    // on a CI runner without it falls back to --repo / GITHUB_REPOSITORY
-    // and the branch the review recorded.
-    let root = review["project"]["root"].as_str().unwrap_or("");
-    let (remote_url, git_branch) = if !root.is_empty() && Path::new(root).is_dir() {
-        git::remote_and_branch(root)
-    } else {
-        (None, None)
-    };
-    let branch = git_branch.or_else(|| {
-        review["project"]["branch"]
-            .as_str()
-            .filter(|b| !b.is_empty() && !b.starts_with('('))
-            .map(str::to_string)
-    });
-    let target = match github::resolve_target(
-        args.repo.as_deref(),
-        args.pr,
-        remote_url.as_deref(),
-        branch.as_deref(),
-        token.as_deref(),
-        args.dry_run,
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("ars: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    if args.dry_run {
-        let num = target
-            .number
-            .map(|n| format!("#{n}"))
-            .unwrap_or_else(|| "(found from the branch when posting)".to_string());
-        println!(
-            "\n  ars pr --dry-run (nothing posted)\n  target  {}/{} · PR {}\n  branch  {}\n  token   {}\n\n  ── comment body ──\n",
-            target.owner,
-            target.repo,
-            num,
-            branch.as_deref().unwrap_or("(unknown)"),
-            if token.is_some() { "present" } else { "missing (set GH_TOKEN to post)" }
-        );
-        print!("{body}");
-        return;
-    }
-
-    let token = match token {
-        Some(t) => t,
-        None => {
-            eprintln!(
-                "ars: no token to post with. Set GH_TOKEN (or GITHUB_TOKEN), or use --dry-run."
-            );
-            std::process::exit(1);
-        }
-    };
-    match github::upsert_comment(&token, &target, body).await {
-        Ok((action, url)) => println!("ars: {action} the review comment → {url}"),
-        Err(e) => {
-            eprintln!("ars: {e}");
-            std::process::exit(1);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_capsule;
-
-    #[test]
-    fn capsules_are_review_json() {
-        assert!(parse_capsule(r#"{"project":{"name":"x"},"files":[]}"#).is_ok());
-        assert!(parse_capsule(r#"{"sessionId":"old session capsule"}"#).is_err());
-        assert!(parse_capsule("not json").is_err());
-    }
 }

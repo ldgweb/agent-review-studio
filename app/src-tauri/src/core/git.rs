@@ -1,7 +1,7 @@
 // Git plumbing for the project review (core/review): process spawning that
 // never opens a console window, never blocks on a credential prompt and
-// never writes to the repository, guards for every path a transcript or a
-// client names, and the remote parsing the CLI's PR comment needs.
+// never writes to the repository, and guards for every path a transcript or a
+// client names.
 //
 // Agent Review Studio only reads repositories: it changes no file, no
 // index and no ref. Every change the reviewer wants goes to the agent as an
@@ -225,67 +225,6 @@ pub(crate) fn status_paths(out: &str) -> Vec<&str> {
     paths
 }
 
-/// origin's URL and the current branch of the repository at `root`: the
-/// CLI finds the pull request with them.
-pub fn remote_and_branch(root: &str) -> (Option<String>, Option<String>) {
-    let remote = git(root, &["remote", "get-url", "origin"]);
-    let branch = git(root, &["symbolic-ref", "--short", "-q", "HEAD"]);
-    let text = |r: GitResult| {
-        let t = r.out.trim().to_string();
-        (r.ok && !t.is_empty()).then_some(t)
-    };
-    (text(remote), text(branch))
-}
-
-/// One GitHub owner/repo segment: `[A-Za-z0-9._-]+`, never `.` or `..`.
-fn slug_part(s: &str) -> Option<String> {
-    let ok = !s.is_empty()
-        && s != "."
-        && s != ".."
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-');
-    ok.then(|| s.to_string())
-}
-
-/// `owner/repo` (e.g. `--repo` or GITHUB_REPOSITORY), validated; a trailing
-/// `.git` or `/` is tolerated.
-pub fn parse_owner_repo(s: &str) -> Option<(String, String)> {
-    let path = s.trim().trim_end_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let (owner, repo) = path.split_once('/')?;
-    Some((slug_part(owner)?, slug_part(repo)?))
-}
-
-/// owner/repo from a GitHub remote URL, or None when it is not one. The host
-/// must be exactly github.com, in one of the forms
-/// `https://[user@]github.com/o/r`, `ssh://git@github.com/o/r` or
-/// `git@github.com:o/r` (optional `.git`, optional trailing `/`).
-pub fn github_slug(remote_url: &str) -> Option<(String, String)> {
-    let t = remote_url.trim();
-    let path = if let Some(rest) = t.strip_prefix("https://") {
-        let (authority, path) = rest.split_once('/')?;
-        // userinfo (`x-access-token:…@`) may precede the host
-        let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-        if !host.eq_ignore_ascii_case("github.com") {
-            return None;
-        }
-        path
-    } else if let Some(rest) = t.strip_prefix("ssh://") {
-        let (authority, path) = rest.split_once('/')?;
-        if !authority.eq_ignore_ascii_case("git@github.com") {
-            return None;
-        }
-        path
-    } else {
-        let (authority, path) = t.split_once(':')?;
-        if !authority.eq_ignore_ascii_case("git@github.com") {
-            return None;
-        }
-        path
-    };
-    parse_owner_repo(path)
-}
-
 /// A throwaway directory, removed on drop (tests).
 #[cfg(test)]
 pub(crate) struct TemporaryDir(pub std::path::PathBuf);
@@ -382,43 +321,5 @@ mod tests {
             status_paths(&out),
             vec!["my dir/a b.ts", "new name.ts", "notes/to do.md"]
         );
-    }
-
-    #[test]
-    fn github_slugs_require_the_exact_host() {
-        let ok = Some(("octo".to_string(), "repo.js".to_string()));
-        for good in [
-            "https://github.com/octo/repo.js",
-            "https://github.com/octo/repo.js.git",
-            "https://github.com/octo/repo.js/",
-            "https://x-access-token:abc@github.com/octo/repo.js.git",
-            "ssh://git@github.com/octo/repo.js.git",
-            "git@github.com:octo/repo.js.git",
-            "git@github.com:octo/repo.js/",
-        ] {
-            assert_eq!(github_slug(good), ok, "{good}");
-        }
-        for evil in [
-            "https://github.com.evil.example/octo/repo",
-            "https://evil.example/github.com/octo/repo",
-            "git@github.com.evil.example:octo/repo",
-            "ssh://git@evilgithub.com/octo/repo",
-            "https://notgithub.com/octo/repo",
-            "http://github.com/octo/repo",
-            "https://github.com/octo",
-            "https://github.com/octo/repo/extra",
-            "https://github.com/octo/re po",
-            "https://github.com/../repo",
-            "https://github.com/octo/repo?x=1",
-        ] {
-            assert_eq!(github_slug(evil), None, "{evil}");
-        }
-        assert_eq!(
-            parse_owner_repo("octo/repo"),
-            Some(("octo".into(), "repo".into()))
-        );
-        assert_eq!(parse_owner_repo("octo/repo/x"), None);
-        assert_eq!(parse_owner_repo("octo"), None);
-        assert_eq!(parse_owner_repo("oc to/repo"), None);
     }
 }

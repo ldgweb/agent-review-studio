@@ -9,9 +9,8 @@
 // would notify the window and make it fetch the sessions again.
 
 use super::adapters::{
-    aider::AiderAdapter, claude_code::ClaudeCodeAdapter, codex::CodexAdapter,
-    copilot::CopilotAdapter, cursor::CursorAdapter, custom::CustomAdapter,
-    gemini::GeminiCliAdapter, AdapterConfig, SessionAdapter,
+    claude_code::ClaudeCodeAdapter, codex::CodexAdapter, copilot::CopilotAdapter,
+    cursor::CursorAdapter, custom::CustomAdapter, AdapterConfig, SessionAdapter,
 };
 use super::config::{load_config, AppConfig};
 use super::domain::AgentSession;
@@ -71,8 +70,6 @@ static ADAPTERS: Lazy<Vec<Box<dyn SessionAdapter + Send + Sync>>> = Lazy::new(||
         Box::new(CodexAdapter::new()),
         Box::new(CursorAdapter::new()),
         Box::new(CopilotAdapter::new()),
-        Box::new(AiderAdapter::new()),
-        Box::new(GeminiCliAdapter::new()),
         Box::new(CustomAdapter::new()),
     ]
 });
@@ -218,7 +215,6 @@ fn adapter_config_of(config: &AppConfig, id: &str) -> AdapterConfig {
     AdapterConfig {
         enabled: file.enabled,
         dir: file.dir,
-        project_dirs: file.project_dirs.unwrap_or_default(),
         dirs: file.dirs.unwrap_or_default(),
     }
 }
@@ -370,6 +366,8 @@ fn do_scan() -> Arc<ScanState> {
     }
     // History of a disabled source stays in the database but is not served:
     // turning a source off hides its sessions, turning it on restores them.
+    // Sessions of a source the app no longer reads (Gemini CLI and Aider,
+    // until 0.11) stay hidden too.
     let disabled = disabled_sources(&config);
     for (summary, archived, hash) in
         storage::list_stored_summaries(MAX_SERVED_ACTIVE, MAX_SERVED_ARCHIVED)
@@ -377,7 +375,8 @@ fn do_scan() -> Arc<ScanState> {
         let Ok(session) = serde_json::from_value::<AgentSession>(summary) else {
             continue;
         };
-        if disabled.contains(session.agent.as_str()) {
+        let agent = session.agent.as_str();
+        if disabled.contains(agent) || !ADAPTERS.iter().any(|a| a.id() == agent) {
             continue;
         }
         if !seen.insert(session.session_id.clone()) {

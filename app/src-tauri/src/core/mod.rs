@@ -15,7 +15,6 @@ pub(crate) mod fixture;
 pub mod git;
 pub mod normalize;
 pub mod paths;
-pub mod redact;
 pub mod review;
 pub mod rules;
 pub mod scanner;
